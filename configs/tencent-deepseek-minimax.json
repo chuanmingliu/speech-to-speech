@@ -1,0 +1,15 @@
+{
+  "mode": "realtime",
+  "ws_host": "0.0.0.0",
+  "ws_port": 8765,
+  "stt": "tencent",
+  "enable_live_transcription": false,
+  "llm_backend": "chat-completions",
+  "model_name": "deepseek-chat",
+  "responses_api_base_url": "https://api.deepseek.com",
+  "responses_api_stream": true,
+  "responses_api_disable_thinking": false,
+  "tts": "minimax",
+  "num_pipelines": 1,
+  "log_level": "info"
+}

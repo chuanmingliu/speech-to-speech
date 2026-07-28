@@ -149,6 +149,7 @@ activemq-data/
 
 # Environments
 .env
+.env.local
 .envrc
 .venv
 env/
@@ -229,3 +230,4 @@ dmypy.json
 cover/
 .tox/
 uv.lock
+.gstack/

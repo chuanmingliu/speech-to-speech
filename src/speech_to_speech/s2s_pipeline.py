@@ -375,6 +375,7 @@ def _build_pipeline_handlers(
     pocket_tts_handler_kwargs: PocketTTSHandlerArguments,
     kokoro_tts_handler_kwargs: KokoroTTSHandlerArguments,
     qwen3_tts_handler_kwargs: Qwen3TTSHandlerArguments,
+    cancel_scope: CancelScope | None = None,
     speculative_turns: SpeculativeTurnTracker | None = None,
 ) -> list[Any]:
     """Build the shared handler chain: VAD → STT → TranscriptionNotifier → LM → LMOutputProcessor → TTS.
@@ -440,6 +441,8 @@ def _build_pipeline_handlers(
         pocket_tts_handler_kwargs,
         kokoro_tts_handler_kwargs,
         qwen3_tts_handler_kwargs,
+        cancel_scope=cancel_scope,
+        speculative_turns=speculative_turns,
     )
 
     return [vad, stt, transcription_notifier, lm, lm_processor, tts]
@@ -559,6 +562,7 @@ def _build_realtime_pipeline_unit(
         pocket_tts_handler_kwargs=pocket_tts_kw,
         kokoro_tts_handler_kwargs=kokoro_tts_kw,
         qwen3_tts_handler_kwargs=qwen3_tts_kw,
+        cancel_scope=cancel_scope,
         speculative_turns=speculative_turns,
     )
     for h in handlers:
@@ -742,6 +746,7 @@ def build_pipeline(
         pocket_tts_handler_kwargs=pocket_tts_handler_kwargs,
         kokoro_tts_handler_kwargs=kokoro_tts_handler_kwargs,
         qwen3_tts_handler_kwargs=qwen3_tts_handler_kwargs,
+        cancel_scope=queues_and_events["cancel_scope"],
     )
 
     return ThreadManager([*comms_handlers, *pipeline_handlers])
@@ -841,9 +846,20 @@ def get_stt_handler(
                 setup_kwargs=setup_kwargs,
             )
         )
+    elif module_kwargs.stt == "tencent":
+        from speech_to_speech.STT.tencent_asr_handler import TencentASRHandler
+
+        return with_speculative_turns(
+            TencentASRHandler(
+                stop_event,
+                queue_in=spoken_prompt_queue,
+                queue_out=text_prompt_queue,
+            )
+        )
     else:
         raise ValueError(
-            "The STT should be either whisper, whisper-mlx, mlx-audio-whisper, faster-whisper, parakeet-tdt, or paraformer."
+            "The STT should be either whisper, whisper-mlx, mlx-audio-whisper, faster-whisper, "
+            "parakeet-tdt, paraformer, or tencent."
         )
 
 
@@ -915,6 +931,8 @@ def get_tts_handler(
     pocket_tts_handler_kwargs: PocketTTSHandlerArguments,
     kokoro_tts_handler_kwargs: KokoroTTSHandlerArguments,
     qwen3_tts_handler_kwargs: Qwen3TTSHandlerArguments,
+    cancel_scope: CancelScope | None = None,
+    speculative_turns: SpeculativeTurnTracker | None = None,
 ) -> BaseHandler[TTSIn, TTSOut]:
     if module_kwargs.tts == "chatTTS":
         try:
@@ -977,8 +995,21 @@ def get_tts_handler(
             setup_args=(should_listen,),
             setup_kwargs=vars(qwen3_tts_handler_kwargs),
         )
+    elif module_kwargs.tts == "minimax":
+        from speech_to_speech.TTS.minimax_tts_handler import MiniMaxTTSHandler
+
+        return MiniMaxTTSHandler(
+            stop_event,
+            queue_in=lm_response_queue,
+            queue_out=send_audio_chunks_queue,
+            setup_args=(should_listen,),
+            setup_kwargs={
+                "cancel_scope": cancel_scope,
+                "speculative_turns": speculative_turns,
+            },
+        )
     else:
-        raise ValueError("The TTS should be either chatTTS, facebookMMS, pocket, kokoro, or qwen3")
+        raise ValueError("The TTS should be either chatTTS, facebookMMS, pocket, kokoro, qwen3, or minimax")
 
 
 def main() -> None:

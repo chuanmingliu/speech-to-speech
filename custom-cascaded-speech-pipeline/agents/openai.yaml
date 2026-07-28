@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Cascaded Speech Pipeline"
+  short_description: "Build and verify custom ASR, LLM, and TTS"
+  default_prompt: "Use $custom-cascaded-speech-pipeline to configure and verify a custom ASR, LLM, and TTS cascade."

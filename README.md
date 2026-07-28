@@ -132,6 +132,7 @@ pip install "speech-to-speech[facebook-mms]"    # MMS TTS
 pip install "speech-to-speech[faster-whisper]"  # Faster Whisper STT
 pip install "speech-to-speech[whisper-mlx]"     # Lightning Whisper MLX STT on macOS
 pip install "speech-to-speech[paraformer]"      # Paraformer STT through FunASR
+pip install "speech-to-speech[tencent-asr]"     # Tencent Cloud short-utterance ASR
 pip install "speech-to-speech[mlx-lm]"          # mlx-vlm support for vision models on macOS
 ```
 
@@ -160,6 +161,7 @@ This installs the package in editable mode and makes the `speech-to-speech` CLI 
 | STT | [Lightning Whisper MLX](https://github.com/mustafaaljadery/lightning-whisper-mlx) | Apple Silicon | `whisper-mlx` |
 | STT | [MLX Audio Whisper](https://github.com/huggingface/mlx-audio) | Apple Silicon | built-in on macOS |
 | STT | [Paraformer](https://github.com/modelscope/FunASR) | CUDA / CPU | `paraformer` |
+| STT | [Tencent Cloud SentenceRecognition](https://cloud.tencent.com/document/product/1093/35646) | hosted API | `tencent-asr` |
 | LLM | OpenAI-compatible API (`responses-api`, `chat-completions`) | hosted providers or self-hosted servers | built-in |
 | LLM | [Transformers](https://huggingface.co/models?pipeline_tag=text-generation&sort=trending) | CUDA / CPU | built-in |
 | LLM | [mlx-lm](https://github.com/ml-explore/mlx-lm) | Apple Silicon | built-in on macOS |
@@ -168,8 +170,56 @@ This installs the package in editable mode and makes the `speech-to-speech` CLI 
 | TTS | [Pocket TTS](https://github.com/kyutai-labs/pocket-tts) | CPU / CUDA | `pocket` |
 | TTS | [ChatTTS](https://github.com/2noise/ChatTTS) | CUDA / CPU | `chattts` |
 | TTS | [MMS TTS](https://huggingface.co/docs/transformers/model_doc/mms) | CUDA / CPU | `facebook-mms` |
+| TTS | [MiniMax T2A](https://platform.minimax.io/docs/api-reference/speech-t2a-http) | hosted API | built-in |
 
 Select implementations with `--stt`, `--llm_backend`, and `--tts`. Run `speech-to-speech -h` for exact values and backend-specific flags.
+
+### Tencent ASR + DeepSeek + MiniMax TTS
+
+This hosted-provider profile keeps credentials in the environment. Copy the safe
+template, fill in fresh keys plus a valid MiniMax voice ID, and load it:
+
+```bash
+cp .env.custom.example .env.local
+set -a
+source .env.local
+set +a
+export OPENAI_API_KEY="$DEEPSEEK_API_KEY"
+```
+
+Install the Tencent SDK and launch the checked-in realtime profile:
+
+```bash
+pip install "speech-to-speech[tencent-asr]"
+speech-to-speech configs/tencent-deepseek-minimax.json
+```
+
+The server listens at `ws://localhost:8765/v1/realtime`. Tencent
+`SentenceRecognition` is called only for VAD-finalized utterances, so live partial
+transcription is disabled in this profile. MiniMax uses synchronous T2A HTTP output
+and converts its 16 kHz mono WAV response into the pipeline's PCM16 chunks. Set
+`MINIMAX_TTS_ENDPOINT=https://api.minimaxi.com/v1/t2a_v2` for China-platform
+keys or `https://api.minimax.io/v1/t2a_v2` for global-platform keys.
+
+For a live provider smoke test:
+
+```bash
+set -a && source .env.local && set +a
+uv run --extra tencent-asr python scripts/smoke_custom_services.py
+```
+
+To launch both the backend and the bundled browser voice app:
+
+```bash
+uv run --extra tencent-asr python scripts/run_custom_services_test_app.py
+```
+
+Then open `http://127.0.0.1:7860`, click the center orb, allow microphone
+access, and speak. The page displays user/assistant transcripts and plays
+MiniMax audio. Press `Ctrl-C` in the launcher terminal to stop both processes.
+The launcher uses backend port `8765` when available and automatically selects
+a free port if it is occupied. Use `--backend-port` or `--app-port` to request
+different ports.
 
 ## Run Modes
 
