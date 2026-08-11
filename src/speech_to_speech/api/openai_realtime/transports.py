@@ -89,9 +89,11 @@ class WebSocketTransport(SessionTransport):
         await self.send_events(service.encode_audio_chunk(session_id, pcm))
 
     def discard_pending_audio(self) -> None:
-        # Unplayed audio lives client-side over WebSocket; truncation is the
-        # client's responsibility.
-        pass
+        """Discard transport-owned pending output; WebSocket has none.
+
+        The WebSocket client owns playback buffering and must clear it when the
+        server emits speech_started/cancellation events.
+        """
 
     async def close(self) -> None:
         try:
