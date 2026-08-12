@@ -29,6 +29,7 @@ class ResponsesApiLanguageModelHandlerArguments(LanguageModelBaseArguments):
         default=True,
         metadata={
             "help": "Disable provider-side thinking/reasoning when supported by the OpenAI-compatible backend. "
-            "For Together Qwen3.5 models this sends chat_template_kwargs.enable_thinking=false."
+            "Official DeepSeek endpoints receive thinking.type=disabled; generic Qwen/vLLM backends receive "
+            "chat_template_kwargs.enable_thinking=false."
         },
     )

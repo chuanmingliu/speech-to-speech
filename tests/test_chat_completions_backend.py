@@ -187,9 +187,35 @@ def test_to_chat_tool_choice():
     assert _to_chat_tool_choice({"type": "function", "name": "f"}) == {"type": "function", "function": {"name": "f"}}
 
 
+def test_deepseek_uses_official_thinking_disabled_body():
+    build = ChatCompletionsApiModelHandler._build_extra_body
+    assert build("https://api.deepseek.com", True, None) == {"thinking": {"type": "disabled"}}
+    assert build("https://api.deepseek.com/v1/", True, None) == {"thinking": {"type": "disabled"}}
+
+
+def test_generic_openai_compatible_keeps_chat_template_contract():
+    build = ChatCompletionsApiModelHandler._build_extra_body
+    assert build("http://127.0.0.1:9000/v1", True, None) == {
+        "chat_template_kwargs": {"enable_thinking": False}
+    }
+
+
+def test_deepseek_thinking_body_requires_canonical_official_endpoint():
+    for base_url in [
+        "http://api.deepseek.com",
+        "https://api.deepseek.com.evil.example",
+        "https://user@api.deepseek.com",
+        "https://api.deepseek.com/v2",
+        "https://api.deepseek.com/v1?mode=preview",
+        "https://api.deepseek.com/v1#preview",
+    ]:
+        assert ChatCompletionsApiModelHandler._build_extra_body(base_url, True, None) == {
+            "chat_template_kwargs": {"enable_thinking": False}
+        }
+
+
 def test_build_extra_body_variants():
     f = ChatCompletionsApiModelHandler._build_extra_body
-    assert f("http://x/v1", True, None) == {"chat_template_kwargs": {"enable_thinking": False}}
     assert f("http://x/v1", True, "none") == {"reasoning_effort": "none"}  # explicit effort wins
     assert f("https://api.openai.com/v1", True, "none") is None  # official OpenAI: no extra_body
     assert f("https://api.openai.com/v1/", True, "none") is None  # trailing slash still official

@@ -271,9 +271,9 @@ def test_custom_service_json_profile_selects_all_three_providers():
     assert args.module_kwargs.enable_live_transcription is False
     assert args.module_kwargs.llm_backend == "chat-completions"
     assert args.module_kwargs.tts == "minimax"
-    assert args.responses_api_language_model_handler_kwargs.model_name == "deepseek-chat"
+    assert args.responses_api_language_model_handler_kwargs.model_name == "deepseek-v4-flash"
     assert args.responses_api_language_model_handler_kwargs.responses_api_base_url == "https://api.deepseek.com"
-    assert args.responses_api_language_model_handler_kwargs.responses_api_disable_thinking is False
+    assert args.responses_api_language_model_handler_kwargs.responses_api_disable_thinking is True
 
 
 def test_get_stt_handler_builds_tencent_adapter(monkeypatch):

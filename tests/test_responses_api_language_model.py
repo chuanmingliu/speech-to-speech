@@ -93,7 +93,7 @@ def _make_request(text="Hi", chat_size=2):
     return GenerateResponseRequest(runtime_config=cfg)
 
 
-def _make_handler(*, disable_thinking=False, stream=True, cancel_scope=None):
+def _make_handler(*, base_url=None, disable_thinking=False, stream=True, cancel_scope=None):
     handler = object.__new__(ResponsesApiModelHandler)
     handler.model_name = "test-model"
     handler.stream = stream
@@ -102,7 +102,7 @@ def _make_handler(*, disable_thinking=False, stream=True, cancel_scope=None):
     handler.request_timeout_s = 20.0
     handler.request_timeout = 20.0
     handler.disable_thinking = disable_thinking
-    handler._extra_body = {"chat_template_kwargs": {"enable_thinking": False}} if disable_thinking else None
+    handler._extra_body = handler._build_extra_body(base_url, disable_thinking, None)
     handler.user_role = "user"
     handler.cancel_scope = cancel_scope
     handler.speculative_turns = None
@@ -414,8 +414,8 @@ def test_empty_context_fails_with_clear_message_without_calling_provider():
     assert "input" in eors[0].error
 
 
-def test_disable_thinking_passes_extra_body():
-    handler = _make_handler(disable_thinking=True)
+def test_deepseek_disable_thinking_passes_official_extra_body():
+    handler = _make_handler(base_url="https://api.deepseek.com/v1/", disable_thinking=True)
     captured = {}
 
     def fake_create(**kwargs):
@@ -431,7 +431,7 @@ def test_disable_thinking_passes_extra_body():
 
     list(handler.process(_make_request("Hi")))
 
-    assert captured["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
+    assert captured["extra_body"] == {"thinking": {"type": "disabled"}}
 
 
 def test_no_disable_thinking_omits_extra_body():

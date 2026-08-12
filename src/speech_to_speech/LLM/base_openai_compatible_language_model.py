@@ -4,6 +4,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 import httpx
 from nltk import sent_tokenize
@@ -173,6 +174,27 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
             return False
         return base_url.rstrip("/") == "https://api.openai.com/v1"
 
+    @staticmethod
+    def _is_official_deepseek(base_url: Optional[str]) -> bool:
+        """Whether ``base_url`` is a canonical official DeepSeek endpoint."""
+        if base_url is None:
+            return False
+        try:
+            parsed = urlsplit(base_url)
+            port = parsed.port
+        except ValueError:
+            return False
+        return (
+            parsed.scheme == "https"
+            and parsed.hostname == "api.deepseek.com"
+            and parsed.username is None
+            and parsed.password is None
+            and port is None
+            and parsed.path in {"", "/", "/v1", "/v1/"}
+            and not parsed.query
+            and not parsed.fragment
+        )
+
     @classmethod
     def _build_extra_body(
         cls,
@@ -182,15 +204,16 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
     ) -> Optional[dict[str, Any]]:
         """Build the provider-specific ``extra_body`` used to disable reasoning.
 
-        Providers differ in how reasoning is turned off: vLLM/Qwen honour
-        ``chat_template_kwargs.enable_thinking=false``, while others (e.g. GLM via
-        the HF router) ignore that and require ``reasoning_effort='none'``. A
-        non-empty ``reasoning_effort`` therefore takes precedence; otherwise we fall
-        back to the chat-template flag. None of this applies to the official
-        OpenAI server, which rejects unknown extra_body keys.
+        Providers differ in how reasoning is turned off: official DeepSeek uses
+        ``thinking.type=disabled``; vLLM/Qwen honour
+        ``chat_template_kwargs.enable_thinking=false``; and others (e.g. GLM via
+        the HF router) require ``reasoning_effort='none'``. None of these provider
+        keys apply to official OpenAI, which rejects unknown ``extra_body`` keys.
         """
         if base_url is None or cls._is_official_openai(base_url):
             return None
+        if disable_thinking and cls._is_official_deepseek(base_url):
+            return {"thinking": {"type": "disabled"}}
         if reasoning_effort:
             return {"reasoning_effort": reasoning_effort}
         if disable_thinking:
