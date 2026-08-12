@@ -181,15 +181,11 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
             return False
         try:
             parsed = urlsplit(base_url)
-            port = parsed.port
         except ValueError:
             return False
         return (
             parsed.scheme == "https"
-            and parsed.hostname == "api.deepseek.com"
-            and parsed.username is None
-            and parsed.password is None
-            and port is None
+            and parsed.netloc == "api.deepseek.com"
             and parsed.path in {"", "/", "/v1", "/v1/"}
             and not parsed.query
             and not parsed.fragment

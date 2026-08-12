@@ -189,8 +189,13 @@ def test_to_chat_tool_choice():
 
 def test_deepseek_uses_official_thinking_disabled_body():
     build = ChatCompletionsApiModelHandler._build_extra_body
-    assert build("https://api.deepseek.com", True, None) == {"thinking": {"type": "disabled"}}
-    assert build("https://api.deepseek.com/v1/", True, None) == {"thinking": {"type": "disabled"}}
+    for base_url in [
+        "https://api.deepseek.com",
+        "https://api.deepseek.com/",
+        "https://api.deepseek.com/v1",
+        "https://api.deepseek.com/v1/",
+    ]:
+        assert build(base_url, True, None) == {"thinking": {"type": "disabled"}}
 
 
 def test_generic_openai_compatible_keeps_chat_template_contract():
@@ -205,6 +210,8 @@ def test_deepseek_thinking_body_requires_canonical_official_endpoint():
         "http://api.deepseek.com",
         "https://api.deepseek.com.evil.example",
         "https://user@api.deepseek.com",
+        "https://api.deepseek.com:/v1",
+        "https://api.deepseek.com:443/v1",
         "https://api.deepseek.com/v2",
         "https://api.deepseek.com/v1?mode=preview",
         "https://api.deepseek.com/v1#preview",
