@@ -71,6 +71,7 @@ class ResponseHandler(RealtimeBaseHandler):
         st.response_pending = False
         st.current_response_params = None
         st.pending_output_text_parts = []
+        st.output_audio_resampler = None
 
     def _start_item(self, conn_id: str) -> str:
         """Generate a new item ID, reset content index, and store it."""
@@ -222,6 +223,7 @@ class ResponseHandler(RealtimeBaseHandler):
         if st.in_response:
             resp_id, item_id = self._ensure_response(conn_id)
             if response_wants_audio(st.current_response_params):
+                events.extend(self._service.audio.finish_audio_response(conn_id, flush=status == "completed"))
                 events.append(
                     ResponseAudioDoneEvent(
                         type="response.output_audio.done",

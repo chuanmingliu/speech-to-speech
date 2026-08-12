@@ -210,6 +210,10 @@ tempCodeRunnerFile.py
 # PyPI configuration file
 .pypirc
 
+# Local agent workspaces
+.worktrees/
+.superpowers/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

@@ -14,7 +14,7 @@ from openai.types.realtime import (
 )
 
 from speech_to_speech.api.openai_realtime.handlers.base import RealtimeBaseHandler
-from speech_to_speech.api.openai_realtime.utils import resample
+from speech_to_speech.api.openai_realtime.utils import StreamingPCMResampler, resample
 from speech_to_speech.pipeline.events import SpeechStartedEvent, SpeechStoppedEvent
 
 if TYPE_CHECKING:
@@ -194,7 +194,6 @@ class AudioHandler(RealtimeBaseHandler):
 
     def encode_audio_chunk(self, conn_id: str, audio: bytes) -> list[ServerEvent]:
         """Encode a raw PCM audio chunk as a base64 delta event for the WebSocket transport."""
-        response = self._service.response
         st = self._state(conn_id)
 
         resp_id, item_id, events = self.begin_audio_response(conn_id)
@@ -208,17 +207,40 @@ class AudioHandler(RealtimeBaseHandler):
                 client_out_rate = getattr(audio_cfg.output.format, "rate", None) or PIPELINE_SAMPLE_RATE
             else:
                 client_out_rate = PIPELINE_SAMPLE_RATE
-        audio = resample(audio, PIPELINE_SAMPLE_RATE, client_out_rate)
-        b64 = base64.b64encode(audio).decode("ascii")
-        events.append(
-            ResponseAudioDeltaEvent(
-                type="response.output_audio.delta",
-                event_id=self._next_event_id(),
-                content_index=response._next_content_index(conn_id),
-                delta=b64,
-                item_id=item_id,
-                output_index=0,
-                response_id=resp_id,
-            )
-        )
+        output_resampler = st.output_audio_resampler
+        if output_resampler is None:
+            output_resampler = StreamingPCMResampler(PIPELINE_SAMPLE_RATE, client_out_rate)
+            st.output_audio_resampler = output_resampler
+        elif output_resampler.to_rate != client_out_rate:
+            # Apply a mid-response session update to the next response. Resetting
+            # this filter here would recreate the packet-boundary seam.
+            logger.warning("Ignoring output sample-rate change until the next response")
+        audio = output_resampler.process(audio)
+        if audio:
+            events.append(self._audio_delta(conn_id, resp_id, item_id, audio))
         return events
+
+    def finish_audio_response(self, conn_id: str, *, flush: bool) -> list[ServerEvent]:
+        """Flush a completed response's filter tail or discard it on cancel."""
+        st = self._state(conn_id)
+        output_resampler = st.output_audio_resampler
+        st.output_audio_resampler = None
+        if output_resampler is None or not flush:
+            return []
+        audio = output_resampler.finish()
+        if not audio:
+            return []
+        resp_id, item_id = self._service.response._ensure_response(conn_id)
+        return [self._audio_delta(conn_id, resp_id, item_id, audio)]
+
+    def _audio_delta(self, conn_id: str, resp_id: str, item_id: str, audio: bytes) -> ResponseAudioDeltaEvent:
+        b64 = base64.b64encode(audio).decode("ascii")
+        return ResponseAudioDeltaEvent(
+            type="response.output_audio.delta",
+            event_id=self._next_event_id(),
+            content_index=self._service.response._next_content_index(conn_id),
+            delta=b64,
+            item_id=item_id,
+            output_index=0,
+            response_id=resp_id,
+        )

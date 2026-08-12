@@ -60,6 +60,9 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 MAX_AUDIO_BATCH_BYTES = 6400
+AUDIO_BYTES_PER_SECOND = PIPELINE_SAMPLE_RATE * 2
+AUDIO_PACING_LEAD_S = 0.25
+AUDIO_CLOCK = time.monotonic
 # How long the release path waits for SESSION_END to propagate through the
 # handler chain back to output_queue before warning that the unit is stuck.
 # Tests monkeypatch this to a small value since their fixtures usually skip
@@ -397,6 +400,8 @@ async def _dispatch_client_event(
         _flush_queue(unit.output_queue, preserve=_keep_audio_sentinel)
         _flush_queue(unit.text_output_queue, preserve=_keep_user_text_event)
         transport.discard_pending_audio()
+        if unit.session is not None:
+            unit.session.audio_playback_deadline = AUDIO_CLOCK()
         events = service.handle_response_cancel(session_id)
         if events:
             await transport.send_events(events)
@@ -751,6 +756,8 @@ def create_app(pool: list[PipelineUnit], stop_event: ThreadingEvent) -> FastAPI:
                             # finish_response() runs on the sentinel, not when
                             # playback completes. No-op over WebSocket.
                             transport.discard_pending_audio()
+                            if session is not None:
+                                session.audio_playback_deadline = AUDIO_CLOCK()
                         if was_in_response or was_response_pending:
                             if interrupt_enabled:
                                 unit.cancel_scope.cancel()
@@ -772,6 +779,21 @@ def create_app(pool: list[PipelineUnit], stop_event: ThreadingEvent) -> FastAPI:
                     pass
 
                 try:
+                    if session is not None:
+                        now = AUDIO_CLOCK()
+                        pending = session.pending_output_item
+                        terminal_pending = (
+                            pending is not None
+                            and _is_audio_done(pending)
+                            and not _should_discard_audio(unit, pending)
+                        )
+                        ready_at = session.audio_playback_deadline
+                        if not terminal_pending:
+                            ready_at -= AUDIO_PACING_LEAD_S
+                        if now < ready_at:
+                            await asyncio.sleep(0.01)
+                            continue
+
                     if session is not None and session.pending_output_item is not None:
                         audio_chunk = session.pending_output_item
                         session.pending_output_item = None
@@ -785,6 +807,14 @@ def create_app(pool: list[PipelineUnit], stop_event: ThreadingEvent) -> FastAPI:
                         break
 
                     if _is_audio_done(audio_chunk):
+                        if (
+                            session is not None
+                            and not _should_discard_audio(unit, audio_chunk)
+                            and AUDIO_CLOCK() < session.audio_playback_deadline
+                        ):
+                            session.pending_output_item = audio_chunk
+                            await asyncio.sleep(0.01)
+                            continue
                         audio_generation = _audio_generation(audio_chunk)
                         if audio_generation is not None and unit.cancel_scope.is_stale(audio_generation):
                             if session_id:
@@ -801,6 +831,8 @@ def create_app(pool: list[PipelineUnit], stop_event: ThreadingEvent) -> FastAPI:
                         unit.response_playing.clear()
                         unit.cancel_scope.response_done(audio_generation)
                         unit.should_listen.set()
+                        if session is not None:
+                            session.audio_playback_deadline = 0.0
                         logger.info(f"Pipeline {unit.index}: response complete, listening re-enabled")
                         continue
 
@@ -857,6 +889,12 @@ def create_app(pool: list[PipelineUnit], stop_event: ThreadingEvent) -> FastAPI:
 
                     if transport is not None and session_id:
                         await transport.send_audio_chunk(unit.service, session_id, bytes(audio_batch))
+                        if session is not None:
+                            sent_at = AUDIO_CLOCK()
+                            duration = len(audio_batch) / AUDIO_BYTES_PER_SECOND
+                            session.audio_playback_deadline = (
+                                max(session.audio_playback_deadline, sent_at) + duration
+                            )
                 except Empty:
                     pass
 

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from queue import Queue
 from threading import Event
+from types import ModuleType
 from typing import Any, TypeAlias
 
 import numpy as np
@@ -40,14 +42,21 @@ class _PendingShortSegment:
 _SHORT_SEGMENT_MIN_FRAGMENT_MS = 100
 
 
-# Optional import for audio enhancement
-try:
+def _load_deepfilter() -> tuple[Any, Any]:
+    """Load DeepFilterNet, adapting its legacy type import for Torchaudio 2.11+."""
+    try:
+        from torchaudio.backend.common import AudioMetaData as _AudioMetaData  # noqa: F401
+    except ModuleNotFoundError:
+        backend_module = ModuleType("torchaudio.backend")
+        backend_module.__path__ = []
+        compatibility_module = ModuleType("torchaudio.backend.common")
+        compatibility_module.AudioMetaData = Any
+        sys.modules["torchaudio.backend"] = backend_module
+        sys.modules["torchaudio.backend.common"] = compatibility_module
+
     from df.enhance import enhance, init_df
 
-    HAS_DF = True
-except (ImportError, ModuleNotFoundError) as e:
-    HAS_DF = False
-    logger.warning(f"DeepFilterNet not available for audio enhancement: {e}")
+    return enhance, init_df
 
 
 class VADHandler(BaseHandler[VADIn, VADOut]):
@@ -107,12 +116,18 @@ class VADHandler(BaseHandler[VADIn, VADOut]):
         )
         self.audio_enhancement = audio_enhancement
         if audio_enhancement:
-            if not HAS_DF:
+            try:
+                enhance, init_df = _load_deepfilter()
+            except ImportError as e:
                 logger.error(
-                    "Audio enhancement requested but DeepFilterNet is not available. Disabling audio enhancement."
+                    "Audio enhancement requested but DeepFilterNet is not available (%s). "
+                    "Install DeepFilterNet in a Python 3.10 or 3.11 environment, then retry. "
+                    "Disabling audio enhancement.",
+                    e,
                 )
                 self.audio_enhancement = False
             else:
+                self._enhance = enhance
                 self.enhanced_model, self.df_state, _ = init_df()
 
         # State for progressive audio release
@@ -817,7 +832,7 @@ class VADHandler(BaseHandler[VADIn, VADOut]):
                 orig_freq=self.sample_rate,
                 new_freq=self.df_state.sr(),
             )
-            enhanced = enhance(
+            enhanced = self._enhance(
                 self.enhanced_model,
                 self.df_state,
                 audio_float32.unsqueeze(0),
@@ -828,7 +843,7 @@ class VADHandler(BaseHandler[VADIn, VADOut]):
                 new_freq=self.sample_rate,
             )
         else:
-            enhanced = enhance(self.enhanced_model, self.df_state, torch.from_numpy(array))
+            enhanced = self._enhance(self.enhanced_model, self.df_state, torch.from_numpy(array))
         return enhanced.numpy().squeeze()
 
     def on_session_end(self):

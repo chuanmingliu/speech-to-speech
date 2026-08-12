@@ -70,7 +70,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             "output_format": "hex",
             "voice_setting": {
                 "voice_id": self.voice_id,
-                "speed": 1.0,
+                "speed": 1.1,
                 "vol": 1.0,
                 "pitch": 0,
             },

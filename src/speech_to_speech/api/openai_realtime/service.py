@@ -40,6 +40,7 @@ from speech_to_speech.api.openai_realtime.handlers import (
     SessionHandler,
 )
 from speech_to_speech.api.openai_realtime.runtime_config import RuntimeConfig
+from speech_to_speech.api.openai_realtime.utils import StreamingPCMResampler
 from speech_to_speech.LLM.chat import Chat, make_user_message
 from speech_to_speech.pipeline.events import (
     AssistantTextEvent,
@@ -164,6 +165,7 @@ class ConnState(BaseModel):
     response_pending: bool = False
     audio_buffer_has_data: bool = False
     audio_remainder: bytes = b""
+    output_audio_resampler: StreamingPCMResampler | None = None
     current_response_id: Optional[str] = None
     current_item_id: Optional[str] = None
     content_index: int = 0

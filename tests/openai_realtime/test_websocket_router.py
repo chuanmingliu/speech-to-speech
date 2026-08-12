@@ -81,6 +81,7 @@ def setup():
         handlers=[],
     )
     app = create_app(pool=[unit], stop_event=stop_event)
+    app.state.test_unit = unit
     return (
         app,
         service,
@@ -248,6 +249,8 @@ class TestClientEventDispatch:
             with client.websocket_connect("/v1/realtime") as ws:
                 ws.receive_json()
                 conn_id = list(service._conns.keys())[0]
+                unit = app.state.test_unit
+                unit.session.audio_playback_deadline = time.monotonic() + 60
                 service.response._ensure_response(conn_id)
                 response_playing.set()
                 output_queue.put(_pcm_bytes(256))
@@ -261,6 +264,7 @@ class TestClientEventDispatch:
                 assert text_output_queue.empty()
                 assert not response_playing.is_set()
                 assert cancel_scope.discarding
+                assert unit.session.audio_playback_deadline <= time.monotonic()
 
     def test_response_cancel_spurious_does_not_set_discarding(self, setup):
         """response.cancel when no response is active must NOT enable discarding,
@@ -312,6 +316,31 @@ class TestClientEventDispatch:
 
 
 class TestSendLoop:
+    def test_audio_output_does_not_run_more_than_two_200ms_batches_ahead(self, setup, monkeypatch):
+        app, _, _, output_queue, *_ = setup
+        now = [10.0]
+        monkeypatch.setattr(router_module, "AUDIO_CLOCK", lambda: now[0])
+
+        with TestClient(app) as client:
+            with client.websocket_connect("/v1/realtime") as ws:
+                ws.receive_json()  # session.created
+
+                for _ in range(2):
+                    output_queue.put(_pcm_bytes(3200))  # 200 ms at 16 kHz PCM16
+                    while ws.receive_json()["type"] != "response.output_audio.delta":
+                        pass
+
+                output_queue.put(_pcm_bytes(3200))
+                time.sleep(0.05)
+                assert output_queue.qsize() == 1
+
+                now[0] += 0.16
+                deadline = time.monotonic() + 1
+                while output_queue.qsize() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                assert output_queue.qsize() == 0
+                assert ws.receive_json()["type"] == "response.output_audio.delta"
+
     def test_audio_output_ignores_session_end_control_message(self, setup):
         app, _, _, output_queue, *_ = setup
         with TestClient(app) as client:

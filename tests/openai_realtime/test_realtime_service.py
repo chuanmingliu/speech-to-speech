@@ -10,6 +10,7 @@ from queue import Queue
 from threading import Event, Thread
 from time import sleep
 
+import numpy as np
 import pytest
 from openai.types.realtime import (
     ConversationItemCreatedEvent,
@@ -20,6 +21,7 @@ from openai.types.realtime import (
     InputAudioBufferSpeechStartedEvent,
     InputAudioBufferSpeechStoppedEvent,
     RealtimeErrorEvent,
+    RealtimeSessionCreateRequest,
     ResponseAudioDeltaEvent,
     ResponseAudioDoneEvent,
     ResponseAudioTranscriptDoneEvent,
@@ -38,6 +40,7 @@ from speech_to_speech.api.openai_realtime.service import (
     CHUNK_SIZE_BYTES,
     RealtimeService,
 )
+from speech_to_speech.api.openai_realtime.utils import StreamingPCMResampler
 from speech_to_speech.pipeline.events import (
     AssistantTextEvent,
     PartialTranscriptionEvent,
@@ -738,6 +741,81 @@ class TestEncodeAudioChunk:
         events = service.encode_audio_chunk(conn_id, _pcm_bytes(256))
         resp = events[0].response
         assert resp.metadata == {"key": "value"}
+
+    def test_streaming_resampler_preserves_continuity_across_output_packets(self):
+        """Packet boundaries must not reset the output resampling filter."""
+        source_rate = 16000
+        output_rate = 24000
+        sample_count = source_rate
+        samples = (
+            np.sin(np.arange(sample_count) * 2 * np.pi * 437.3 / source_rate) * 22000
+        ).astype(np.int16)
+
+        whole = StreamingPCMResampler(source_rate, output_rate)
+        expected = whole.process(samples.tobytes()) + whole.finish()
+
+        packeted = StreamingPCMResampler(source_rate, output_rate)
+        output = bytearray()
+        packet_samples = 3200
+        for offset in range(0, sample_count, packet_samples):
+            output.extend(packeted.process(samples[offset : offset + packet_samples].tobytes()))
+        output.extend(packeted.finish())
+
+        expected_samples = np.frombuffer(expected, dtype=np.int16).astype(np.int32)
+        actual_samples = np.frombuffer(output, dtype=np.int16).astype(np.int32)
+        assert len(actual_samples) == len(expected_samples) == 24000
+        assert np.max(np.abs(actual_samples - expected_samples)) <= 2
+
+    def test_service_streams_one_continuous_resample_and_flushes_before_done(self, service, conn_id):
+        source_rate = 16000
+        output_rate = 24000
+        sample_count = source_rate
+        samples = (
+            np.sin(np.arange(sample_count) * 2 * np.pi * 437.3 / source_rate) * 22000
+        ).astype(np.int16)
+        service._state(conn_id).runtime_config.session = RealtimeSessionCreateRequest.model_validate(
+            {
+                "type": "realtime",
+                "audio": {"output": {"format": {"type": "audio/pcm", "rate": output_rate}}},
+            }
+        )
+
+        events = []
+        packet_samples = 3200
+        for offset in range(0, sample_count, packet_samples):
+            events.extend(service.encode_audio_chunk(conn_id, samples[offset : offset + packet_samples].tobytes()))
+        terminal_events = service.finish_response(conn_id)
+        events.extend(terminal_events)
+
+        output = b"".join(
+            base64.b64decode(event.delta) for event in events if isinstance(event, ResponseAudioDeltaEvent)
+        )
+        expected_resampler = StreamingPCMResampler(source_rate, output_rate)
+        expected = expected_resampler.process(samples.tobytes()) + expected_resampler.finish()
+        expected_samples = np.frombuffer(expected, dtype=np.int16).astype(np.int32)
+        actual_samples = np.frombuffer(output, dtype=np.int16).astype(np.int32)
+
+        assert len(actual_samples) == len(expected_samples) == 24000
+        assert np.max(np.abs(actual_samples - expected_samples)) <= 2
+        assert isinstance(terminal_events[-3], ResponseAudioDeltaEvent)
+        assert isinstance(terminal_events[-2], ResponseAudioDoneEvent)
+        assert isinstance(terminal_events[-1], ResponseDoneEvent)
+
+    def test_cancel_discards_resampler_tail_for_immediate_barge_in(self, service, conn_id):
+        service._state(conn_id).runtime_config.session = RealtimeSessionCreateRequest.model_validate(
+            {
+                "type": "realtime",
+                "audio": {"output": {"format": {"type": "audio/pcm", "rate": 24000}}},
+            }
+        )
+        service.encode_audio_chunk(conn_id, _pcm_bytes(3200))
+
+        terminal_events = service.finish_response(conn_id, status="cancelled", reason="turn_detected")
+
+        assert not any(isinstance(event, ResponseAudioDeltaEvent) for event in terminal_events)
+        assert isinstance(terminal_events[-2], ResponseAudioDoneEvent)
+        assert isinstance(terminal_events[-1], ResponseDoneEvent)
+        assert service._state(conn_id).output_audio_resampler is None
 
 
 # ===================================================================
