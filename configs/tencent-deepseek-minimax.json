@@ -11,6 +11,7 @@
   "responses_api_stream": true,
   "responses_api_disable_thinking": true,
   "stream_batch_sentences": 1,
+  "tools_enabled": false,
   "tts": "minimax",
   "num_pipelines": 1,
   "log_level": "info"

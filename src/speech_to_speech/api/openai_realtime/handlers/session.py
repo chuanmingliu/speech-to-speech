@@ -38,6 +38,10 @@ class SessionHandler(RealtimeBaseHandler):
                 _type="invalid_session_type",
             )
 
+        if not self._service.tools_enabled:
+            s.tools = []
+            s.tool_choice = "none"
+
         model = getattr(s, "model", None)
         if model is not None:
             logger.info(f"Session model set to: {model}")

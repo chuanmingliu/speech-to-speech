@@ -81,3 +81,9 @@ class ModuleArguments:
             "num_pipelines; further connections are rejected. Only valid for --mode realtime. Default is 1."
         },
     )
+    tools_enabled: bool = field(
+        default=True,
+        metadata={
+            "help": "Allow realtime clients to declare and invoke tools. Disable for a pure speech pipeline."
+        },
+    )

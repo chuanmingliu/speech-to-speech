@@ -204,11 +204,13 @@ class RealtimeService:
         should_listen: ThreadingEvent | None = None,
         chat_size: int = 10,
         speculative_turns: SpeculativeTurnTracker | None = None,
+        tools_enabled: bool = True,
     ) -> None:
         self.text_prompt_queue = text_prompt_queue
         self.should_listen = should_listen
         self._chat_size = chat_size
         self.speculative_turns = speculative_turns
+        self.tools_enabled = tools_enabled
         self._conns: dict[str, ConnState] = {}
         self.total_usage = GlobalUsageMetrics()
 
@@ -233,6 +235,9 @@ class RealtimeService:
         if self.speculative_turns:
             self.speculative_turns.reset()
         state = ConnState(runtime_config=RuntimeConfig(chat=Chat(self._chat_size)))
+        if not self.tools_enabled:
+            state.runtime_config.session.tools = []
+            state.runtime_config.session.tool_choice = "none"
         self._conns[state.session_id] = state
         self.total_usage.connections += 1
         return state.session_id

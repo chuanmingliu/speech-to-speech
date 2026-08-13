@@ -142,6 +142,9 @@ class ResponseHandler(RealtimeBaseHandler):
         on failure, or ``None`` if there is no text_prompt_queue.
         """
         st = self._state(conn_id)
+        if event.response and not self._service.tools_enabled:
+            event.response.tools = []
+            event.response.tool_choice = "none"
         if event.response:
             if event.response.tool_choice and not isinstance(event.response.tool_choice, str):
                 return self.make_error(

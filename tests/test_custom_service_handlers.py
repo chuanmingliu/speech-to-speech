@@ -47,6 +47,7 @@ def test_custom_service_json_profile_selects_all_three_providers():
     assert args.module_kwargs.stt == "tencent"
     assert args.module_kwargs.enable_live_transcription is True
     assert args.module_kwargs.live_transcription_update_interval == 0.2
+    assert args.module_kwargs.tools_enabled is False
     assert args.module_kwargs.llm_backend == "chat-completions"
     assert args.module_kwargs.tts == "minimax"
     assert args.responses_api_language_model_handler_kwargs.model_name == "deepseek-v4-flash"

@@ -221,6 +221,29 @@ class TestHandleSessionUpdate:
         assert runtime_config.session.tools is not None
         assert runtime_config.session.tool_choice == "required"
 
+    def test_tool_disabled_service_ignores_client_session_tools(self, text_prompt_queue, should_listen):
+        service = RealtimeService(
+            text_prompt_queue=text_prompt_queue,
+            should_listen=should_listen,
+            tools_enabled=False,
+        )
+        conn_id = service.register()
+        try:
+            service.handle_session_update(
+                conn_id,
+                self._make_update(
+                    tools=[{"type": "function", "name": "slow_search"}],
+                    tool_choice="required",
+                ),
+            )
+
+            session = service.build_session_created(conn_id).session
+            assert session is not None
+            assert session.tools == []
+            assert session.tool_choice == "none"
+        finally:
+            service.unregister(conn_id)
+
     def test_session_update_rejects_transcription_session(self, service, conn_id, runtime_config):
         raw = {
             "type": "session.update",
@@ -520,6 +543,33 @@ class TestHandleResponseCreate:
         assert req.response.instructions == "override instructions"
         assert req.response.tool_choice == "auto"
         assert req.runtime_config is runtime_config
+
+    def test_tool_disabled_service_strips_per_response_tools(self, text_prompt_queue, should_listen):
+        service = RealtimeService(
+            text_prompt_queue=text_prompt_queue,
+            should_listen=should_listen,
+            tools_enabled=False,
+        )
+        conn_id = service.register()
+        try:
+            result = service.handle_response_create(
+                conn_id,
+                ResponseCreateEvent(
+                    type="response.create",
+                    response={
+                        "tools": [{"type": "function", "name": "slow_search"}],
+                        "tool_choice": "required",
+                    },
+                ),
+            )
+
+            assert isinstance(result, ResponseCreatedEvent)
+            request = text_prompt_queue.get_nowait()
+            assert request.response is not None
+            assert request.response.tools == []
+            assert request.response.tool_choice == "none"
+        finally:
+            service.unregister(conn_id)
 
     def test_response_create_preserves_latest_user_turn_timing(self, service, conn_id, text_prompt_queue):
         service.dispatch_pipeline_event(
