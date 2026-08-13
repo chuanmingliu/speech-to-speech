@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable, Iterator
+from threading import Event, Thread
 from time import monotonic
 
 from speech_to_speech.pipeline.handler_types import STTIn, STTOut
@@ -46,15 +47,49 @@ class TencentASRHandler(BaseSTTHandler):
         self._speech_started_at_s: float | None = None
         self._first_partial_at_s: float | None = None
         self._final_at_s: float | None = None
+        self._checkpoint_turn_id: str | None = None
+        self._checkpoint_revision: int | None = None
+        self._checkpoint_samples = 0
+        self._checkpoint_text = ""
 
     def process(self, vad_audio: STTIn) -> Iterator[STTOut]:
         key = (vad_audio.turn_id, vad_audio.turn_revision)
         session = self._session_for(key, vad_audio.created_at_s)
+        provider_audio = self._provider_audio(vad_audio)
         try:
             if vad_audio.mode == "progressive":
-                session.push_snapshot(vad_audio.audio)
+                session.push_snapshot(provider_audio)
             else:
-                session.finish(vad_audio.audio)
+                finish_done = Event()
+                stale_watcher: Thread | None = None
+                if self.speculative_turns is not None and vad_audio.turn_id is not None:
+
+                    def abort_if_stale() -> None:
+                        while not finish_done.wait(0.01):
+                            if not self.speculative_turns.is_latest(
+                                vad_audio.turn_id,
+                                vad_audio.turn_revision,
+                            ):
+                                session.close()
+                                logger.info(
+                                    "Tencent finalization cancelled for stale turn=%s rev=%s",
+                                    vad_audio.turn_id,
+                                    vad_audio.turn_revision,
+                                )
+                                return
+
+                    stale_watcher = Thread(
+                        target=abort_if_stale,
+                        name="tencent-asr-stale-finalization",
+                        daemon=True,
+                    )
+                    stale_watcher.start()
+                try:
+                    session.finish(provider_audio)
+                finally:
+                    finish_done.set()
+                    if stale_watcher is not None:
+                        stale_watcher.join(0.05)
 
             for result in session.drain_results():
                 yield self._message_for(result, vad_audio)
@@ -81,6 +116,7 @@ class TencentASRHandler(BaseSTTHandler):
         return self._active_session
 
     def _message_for(self, result: TencentRecognitionResult, vad_audio: STTIn) -> STTOut:
+        text = f"{self._checkpoint_prefix(vad_audio)}{result.text}"
         if result.final:
             if self._final_at_s is None:
                 self._final_at_s = self._clock()
@@ -97,8 +133,17 @@ class TencentASRHandler(BaseSTTHandler):
                     vad_audio.turn_id,
                     vad_audio.turn_revision,
                 )
+            final_text = text.strip()
+            if self.speculative_turns is None or self.speculative_turns.is_latest(
+                vad_audio.turn_id,
+                vad_audio.turn_revision,
+            ):
+                self._checkpoint_turn_id = vad_audio.turn_id
+                self._checkpoint_revision = vad_audio.turn_revision
+                self._checkpoint_samples = len(vad_audio.audio)
+                self._checkpoint_text = final_text
             return Transcription(
-                text=result.text.strip(),
+                text=final_text,
                 language_code=self.language_code,
                 turn_id=vad_audio.turn_id,
                 turn_revision=vad_audio.turn_revision,
@@ -120,11 +165,29 @@ class TencentASRHandler(BaseSTTHandler):
             vad_audio.turn_revision,
         )
         return PartialTranscription(
-            text=result.text,
+            text=text,
             turn_id=vad_audio.turn_id,
             turn_revision=vad_audio.turn_revision,
             first_partial_at_s=self._first_partial_at_s,
         )
+
+    def _checkpoint_prefix(self, vad_audio: STTIn) -> str:
+        if self._has_checkpoint_for(vad_audio):
+            return self._checkpoint_text
+        return ""
+
+    def _has_checkpoint_for(self, vad_audio: STTIn) -> bool:
+        return (
+            vad_audio.turn_id == self._checkpoint_turn_id
+            and self._checkpoint_revision is not None
+            and vad_audio.turn_revision is not None
+            and vad_audio.turn_revision > self._checkpoint_revision
+        )
+
+    def _provider_audio(self, vad_audio: STTIn):
+        if self._has_checkpoint_for(vad_audio):
+            return vad_audio.audio[self._checkpoint_samples :]
+        return vad_audio.audio
 
     def _close_active(self) -> None:
         session, self._active_session = self._active_session, None
@@ -140,4 +203,8 @@ class TencentASRHandler(BaseSTTHandler):
 
     def on_session_end(self) -> None:
         self._close_active()
+        self._checkpoint_turn_id = None
+        self._checkpoint_revision = None
+        self._checkpoint_samples = 0
+        self._checkpoint_text = ""
         super().on_session_end()

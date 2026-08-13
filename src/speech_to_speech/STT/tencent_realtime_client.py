@@ -208,6 +208,8 @@ class TencentRealtimeSession:
                 return
             self._closed = True
             self._cancelled.set()
+            self._writer_done.set()
+            self._terminal.set()
             self._abort_socket()
             try:
                 self._frames.put_nowait(_END)

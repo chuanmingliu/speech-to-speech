@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from speech_to_speech.pipeline.messages import VADAudio
+from speech_to_speech.pipeline.speculative_turns import SpeculativeTurnTracker
 from speech_to_speech.STT.tencent_asr_handler import TencentASRHandler
 from speech_to_speech.STT.tencent_realtime_client import (
     TencentRealtimeConfig,
@@ -158,6 +159,22 @@ class FakeRealtimeSession:
 
     def close(self):
         self.closed = True
+
+
+class BlockingFinalSession(FakeRealtimeSession):
+    def __init__(self):
+        super().__init__()
+        self.finish_started = threading.Event()
+        self.release_finish = threading.Event()
+
+    def finish(self, audio):
+        self.finished.append(np.asarray(audio).copy())
+        self.finish_started.set()
+        self.release_finish.wait(timeout=1.0)
+
+    def close(self):
+        super().close()
+        self.release_finish.set()
 
 
 class FakeSessionFactory:
@@ -360,6 +377,37 @@ def test_partial_is_observable_before_finish_and_stable_text_becomes_the_only_fi
     session.close()
 
 
+def test_close_wakes_finish_waiting_for_a_provider_final_event():
+    websocket = FakeWebSocket()
+    session = TencentRealtimeSession(
+        realtime_config(final_timeout_s=1.0),
+        voice_id="voice-close-final",
+        connect_fn=lambda *_args, **_kwargs: websocket,
+    )
+    finished = threading.Event()
+    errors: list[BaseException] = []
+
+    def finish() -> None:
+        try:
+            session.finish(np.zeros(0, dtype=np.float32))
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    worker = threading.Thread(target=finish, daemon=True)
+    worker.start()
+    wait_until(lambda: websocket.text_messages == ['{"type":"end"}'])
+    started = time.monotonic()
+
+    session.close()
+
+    assert finished.wait(timeout=0.15)
+    assert time.monotonic() - started < 0.15
+    assert errors == []
+    worker.join(timeout=0.1)
+
+
 @pytest.mark.parametrize(
     "event",
     [
@@ -468,6 +516,48 @@ def test_handler_reuses_one_session_for_progressive_and_final_snapshots():
     assert transcriptions[0].final_at_s >= partials[0].first_partial_at_s
 
 
+def test_reopened_revision_sends_only_audio_after_the_completed_transcript_checkpoint():
+    factory = FakeSessionFactory()
+    handler = make_handler(factory)
+    first_progressive = VADAudio(
+        audio=np.arange(2, dtype=np.float32),
+        mode="progressive",
+        turn_id="turn",
+        turn_revision=0,
+    )
+    list(handler.process(first_progressive))
+    first_session = factory.sessions[0]
+    first_session.results = [TencentRecognitionResult("first", final=True, stable=True)]
+    first_final = VADAudio(
+        audio=np.arange(3, dtype=np.float32),
+        mode="final",
+        turn_id="turn",
+        turn_revision=0,
+    )
+    assert list(handler.process(first_final))[0].text == "first"
+
+    reopened_progressive = VADAudio(
+        audio=np.arange(5, dtype=np.float32),
+        mode="progressive",
+        turn_id="turn",
+        turn_revision=1,
+    )
+    list(handler.process(reopened_progressive))
+    reopened_session = factory.sessions[1]
+    reopened_session.results = [TencentRecognitionResult(" second", final=True, stable=True)]
+    reopened_final = VADAudio(
+        audio=np.arange(7, dtype=np.float32),
+        mode="final",
+        turn_id="turn",
+        turn_revision=1,
+    )
+    output = list(handler.process(reopened_final))[0]
+
+    np.testing.assert_array_equal(reopened_session.snapshots[0], np.arange(3, 5, dtype=np.float32))
+    np.testing.assert_array_equal(reopened_session.finished[0], np.arange(3, 7, dtype=np.float32))
+    assert output.text == "first second"
+
+
 def test_handler_closes_old_turn_and_closes_failed_or_ended_sessions():
     factory = FakeSessionFactory()
     handler = make_handler(factory)
@@ -489,6 +579,56 @@ def test_handler_closes_old_turn_and_closes_failed_or_ended_sessions():
     third = factory.sessions[2]
     handler.on_session_end()
     assert third.closed is True
+
+
+def test_handler_aborts_stale_finalization_so_current_revision_is_not_queued_behind_it():
+    from queue import Empty, Queue
+    from threading import Event
+
+    tracker = SpeculativeTurnTracker()
+    tracker.observe("turn", 0)
+    old_session = BlockingFinalSession()
+    current_session = FakeRealtimeSession()
+    current_session.results = [TencentRecognitionResult("current", final=True, stable=True)]
+    sessions = iter((old_session, current_session))
+    queue_in = Queue()
+    queue_out = Queue()
+    stop = Event()
+    handler = TencentASRHandler(
+        stop,
+        queue_in=queue_in,
+        queue_out=queue_out,
+        setup_kwargs={
+            "app_id": "1250000000",
+            "secret_id": "sid",
+            "secret_key": "sentinel-secret",
+            "session_factory": lambda _config: next(sessions),
+        },
+    )
+    handler.speculative_turns = tracker
+    worker = threading.Thread(target=handler.run, daemon=True)
+    worker.start()
+    queue_in.put(VADAudio(audio=np.zeros(1), mode="progressive", turn_id="turn", turn_revision=0))
+    queue_in.put(VADAudio(audio=np.zeros(1), mode="final", turn_id="turn", turn_revision=0))
+    assert old_session.finish_started.wait(timeout=0.2)
+
+    tracker.observe("turn", 1)
+    queue_in.put(VADAudio(audio=np.zeros(1), mode="progressive", turn_id="turn", turn_revision=1))
+    queue_in.put(VADAudio(audio=np.zeros(1), mode="final", turn_id="turn", turn_revision=1))
+    try:
+        output = queue_out.get(timeout=0.15)
+    except Empty:
+        output = None
+    finally:
+        old_session.release_finish.set()
+        stop.set()
+        queue_in.put(b"END")
+        worker.join(timeout=0.5)
+
+    assert output is not None
+    assert output.text == "current"
+    assert output.turn_revision == 1
+    assert old_session.closed is True
 
 
 def test_handler_requires_app_id_from_environment_without_logging_it(monkeypatch, caplog):
