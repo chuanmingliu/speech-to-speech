@@ -216,6 +216,32 @@ def _streaming_client(received: list[str | Exception | Callable[[], str]], **con
     return client, websocket, connection
 
 
+def test_client_accepts_only_official_global_and_china_streaming_endpoints() -> None:
+    from speech_to_speech.TTS.minimax_tts_handler import MiniMaxStreamingClient, MiniMaxTTSConfig
+
+    official_endpoints = (
+        "wss://api.minimax.io/ws/v1/t2a_v2",
+        "wss://api.minimaxi.com/ws/v1/t2a_v2",
+    )
+    for endpoint in official_endpoints:
+        client = MiniMaxStreamingClient(
+            MiniMaxTTSConfig(api_key="test-key", voice_id="test-voice", endpoint=endpoint),
+            decoder_factory=FakeDecoder,
+        )
+        assert client.config.endpoint == endpoint
+
+    for endpoint in (
+        "https://api.minimaxi.com/v1/t2a_v2",
+        "wss://example.com/ws/v1/t2a_v2",
+        "wss://api.minimaxi.com/ws/v1/t2a_v2?redirect=1",
+    ):
+        with np.testing.assert_raises_regex(ValueError, "official secure WebSocket endpoint"):
+            MiniMaxStreamingClient(
+                MiniMaxTTSConfig(api_key="test-key", voice_id="test-voice", endpoint=endpoint),
+                decoder_factory=FakeDecoder,
+            )
+
+
 def test_handshake_uses_authenticated_hardened_websocket_and_official_settings() -> None:
     client, websocket, connection = _streaming_client(
         [_event("connected_success"), _event("task_started")]
@@ -278,6 +304,22 @@ def test_order_preserves_multiple_audio_fragments_and_requires_clean_finish() ->
     assert websocket.sent[1] == {"event": "task_continue", "text": "hello"}
     assert [int(block[0]) for block in blocks] == [1, 2]
     assert tail == []
+
+
+def test_synthesize_accepts_china_region_task_continued_audio_events() -> None:
+    client, _, _ = _streaming_client(
+        [
+            _event("connected_success"),
+            _event("task_started"),
+            _event("task_continued", data={"audio": "03"}, is_final=False),
+            _event("task_continued", data={"audio": "04"}, is_final=True),
+        ]
+    )
+    client.start()
+
+    blocks = list(client.synthesize("hello", cancelled=lambda: False))
+
+    assert [int(block[0]) for block in blocks] == [3, 4]
 
 
 def test_cancel_closes_promptly_during_each_handshake_and_finish_wait() -> None:

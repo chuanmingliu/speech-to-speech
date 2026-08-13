@@ -21,6 +21,13 @@ from speech_to_speech.TTS.incremental_mp3_decoder import IncrementalMP3Decoder
 
 logger = logging.getLogger(__name__)
 
+_OFFICIAL_MINIMAX_STREAMING_ENDPOINTS = frozenset(
+    {
+        "wss://api.minimax.io/ws/v1/t2a_v2",
+        "wss://api.minimaxi.com/ws/v1/t2a_v2",
+    }
+)
+
 
 def _silent_dependency_logger() -> logging.Logger:
     dependency_logger = logging.Logger("speech_to_speech.minimax.private_websocket", level=logging.CRITICAL + 1)
@@ -74,7 +81,7 @@ class MiniMaxStreamingClient:
         connect_fn: Callable[..., Any] = connect,
         decoder_factory: Callable[..., Any] = IncrementalMP3Decoder,
     ) -> None:
-        if config.endpoint != "wss://api.minimax.io/ws/v1/t2a_v2":
+        if config.endpoint not in _OFFICIAL_MINIMAX_STREAMING_ENDPOINTS:
             raise ValueError("MiniMax streaming endpoint must be the official secure WebSocket endpoint")
         if not config.api_key or not config.voice_id:
             raise ValueError("MiniMax API key and voice ID are required")
@@ -163,7 +170,7 @@ class MiniMaxStreamingClient:
             while True:
                 event = self._receive_event(cancelled=cancelled)
                 event_name = event.get("event")
-                if event_name is not None:
+                if event_name not in (None, "task_continued"):
                     raise RuntimeError("MiniMax returned an event out of order")
                 data = event.get("data")
                 if data is not None and not isinstance(data, dict):
