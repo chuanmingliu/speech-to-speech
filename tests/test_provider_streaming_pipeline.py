@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import math
 import queue
 import sys
 import threading
@@ -102,6 +103,24 @@ class _CloseReleasedStream:
             self.closed.set()
             if self.close_delay_s:
                 time.sleep(self.close_delay_s)
+        finally:
+            with self._close_lock:
+                self.concurrent_closes -= 1
+
+
+class _StallingCloseStream(_CloseReleasedStream):
+    def __init__(self):
+        super().__init__(raise_after_close=True)
+        self.release_close = threading.Event()
+
+    def close(self):
+        with self._close_lock:
+            self.close_calls += 1
+            self.concurrent_closes += 1
+            self.max_concurrent_closes = max(self.max_concurrent_closes, self.concurrent_closes)
+        self.closed.set()
+        try:
+            self.release_close.wait(timeout=1.0)
         finally:
             with self._close_lock:
                 self.concurrent_closes -= 1
@@ -230,6 +249,46 @@ def test_cancel_closes_blocked_deepseek_stream_without_stale_output(caplog):
     assert stream.close_calls == 1
     assert stream.max_concurrent_closes == 1
     assert "Provider stream barge-in close latency: 0.050s (turn=turn-1 rev=2)" in caplog.text
+
+
+def test_cancel_abandons_stalled_deepseek_close_without_locking_cleanup():
+    cancel_scope = CancelScope()
+    stream = _StallingCloseStream()
+    handler = _handler(
+        stream_batch_sentences=1,
+        cancel_scope=cancel_scope,
+        provider_close_timeout_s=0.03,
+    )
+    handler.client.chat.completions.create = lambda **_kwargs: stream
+    outputs: list[object] = []
+    completed = threading.Event()
+
+    worker = threading.Thread(target=lambda: (outputs.extend(handler.process(_request())), completed.set()), daemon=True)
+    worker.start()
+    assert stream.first_delta.wait(timeout=0.2)
+    assert stream.blocked.wait(timeout=0.2)
+    started = time.monotonic()
+    try:
+        cancel_scope.cancel()
+        assert stream.closed.wait(timeout=0.1)
+        assert completed.wait(timeout=0.15)
+        assert time.monotonic() - started < 0.15
+        assert stream.close_calls == 1
+        assert stream.max_concurrent_closes == 1
+    finally:
+        stream.release_close.set()
+        worker.join(timeout=0.3)
+
+    assert all("STALE_PROVIDER_TEXT" not in output.text for output in outputs if isinstance(output, LLMResponseChunk))
+
+
+def test_deepseek_provider_close_deadline_must_be_finite_and_positive():
+    for value in (0, -1, math.nan, math.inf, True):
+        try:
+            _handler(provider_close_timeout_s=value)
+        except ValueError:
+            continue
+        raise AssertionError(f"provider_close_timeout_s accepted {value!r}")
 
 
 def test_latency_metrics_and_timestamps_are_monotonic_and_content_free(caplog):

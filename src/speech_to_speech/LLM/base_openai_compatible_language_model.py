@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import math
+import numbers
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from threading import Event, Lock, Thread
@@ -86,22 +88,33 @@ ProviderEvent = TextDelta | AssistantMessage | ToolCall | Usage
 
 
 class _ProviderStreamCloser:
-    """Serialize an idempotent provider close across cancellation and cleanup."""
+    """Own one foreign close operation without blocking concurrent cleanup."""
 
-    def __init__(self, stream: Any) -> None:
+    def __init__(self, stream: Any, *, timeout_s: float) -> None:
         self._stream = stream
         self._lock = Lock()
-        self._closed = False
+        self._started = False
+        self._done = Event()
+        self._timeout_s = timeout_s
 
-    def close(self) -> None:
+    def close(self) -> bool:
+        start_owner = False
         with self._lock:
-            if self._closed:
-                return
-            try:
-                self._stream.close()
-            except Exception:
-                return
-            self._closed = True
+            if not self._started:
+                self._started = True
+                start_owner = True
+
+        if start_owner:
+            Thread(target=self._run_close, name="llm-provider-close", daemon=True).start()
+        return self._done.wait(self._timeout_s)
+
+    def _run_close(self) -> None:
+        try:
+            self._stream.close()
+        except Exception:
+            pass
+        finally:
+            self._done.set()
 
 
 class _Turn(BaseModel):
@@ -161,6 +174,7 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
         disable_thinking: bool = True,
         reasoning_effort: Optional[str] = None,
         request_timeout_s: float = 20.0,
+        provider_close_timeout_s: float = 0.1,
         stream_batch_sentences: int = 3,
         enable_lang_prompt: bool = False,
         compact_history: bool = False,
@@ -175,6 +189,14 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
         self.enable_lang_prompt = enable_lang_prompt
         self.gen_kwargs = dict(gen_kwargs)
         self.request_timeout_s = float(request_timeout_s)
+        if (
+            isinstance(provider_close_timeout_s, bool)
+            or not isinstance(provider_close_timeout_s, numbers.Real)
+            or not math.isfinite(provider_close_timeout_s)
+            or provider_close_timeout_s <= 0
+        ):
+            raise ValueError("provider_close_timeout_s must be a finite positive number")
+        self.provider_close_timeout_s = float(provider_close_timeout_s)
         self._clock = clock
         self.request_timeout = httpx.Timeout(
             self.request_timeout_s,
@@ -511,6 +533,10 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
         turn: _Turn,
         optional_kwargs: dict[str, Any],
     ) -> Iterator[LLMOut]:
+        # Some lightweight callers construct handlers without running setup
+        # (notably compatibility tests and embedders that inject a client).
+        # Keep cancellation cleanup bounded for that supported path too.
+        provider_close_timeout_s = getattr(self, "provider_close_timeout_s", 0.1)
         api_response: Any = None
         stream_closer: _ProviderStreamCloser | None = None
         cancel_watcher_done = Event()
@@ -534,7 +560,10 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
                 api_response = self._request(api_input, optional_kwargs)
             if api_response is not None:
                 if callable(getattr(api_response, "close", None)):
-                    stream_closer = _ProviderStreamCloser(api_response)
+                    stream_closer = _ProviderStreamCloser(
+                        api_response,
+                        timeout_s=provider_close_timeout_s,
+                    )
                 if (
                     self.stream
                     and (turn.gen is not None or self.speculative_turns is not None)
@@ -607,7 +636,7 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
             if stream_closer is not None:
                 stream_closer.close()
             if cancel_watcher is not None:
-                cancel_watcher.join()
+                cancel_watcher.join(provider_close_timeout_s)
 
         if (
             error_message is None

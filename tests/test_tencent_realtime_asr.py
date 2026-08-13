@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import queue
+import threading
 import time
 import traceback
 from urllib.parse import parse_qs, quote, urlsplit
@@ -47,8 +48,33 @@ class FakeWebSocket:
         self.closed = True
         self.incoming.put(EOFError("closed"))
 
+    def close_socket(self):
+        self.close()
+
     def provider_event(self, payload):
         self.incoming.put(json.dumps(payload, ensure_ascii=False))
+
+
+class ProgressingBlockedSendWebSocket(FakeWebSocket):
+    def __init__(self, *, block_end: bool):
+        super().__init__()
+        self.block_end = block_end
+        self.progress_count = 0
+        self.send_finished = threading.Event()
+
+    def send(self, message, text=None):
+        should_block = (message == '{"type":"end"}') if self.block_end else isinstance(message, bytes)
+        if not should_block:
+            return super().send(message, text=text)
+        try:
+            started = time.monotonic()
+            while not self.closed and time.monotonic() - started < 0.2:
+                self.progress_count += 1
+                time.sleep(0.005)
+            if not self.closed:
+                raise RuntimeError("production deadline did not abort progressing Tencent write")
+        finally:
+            self.send_finished.set()
 
 
 class FakeClock:
@@ -278,6 +304,33 @@ def test_session_sends_only_each_snapshot_suffix_in_paced_bounded_frames():
     assert all(len(frame) <= 6400 for frame in websocket.binary_messages)
     assert clock.sleeps == pytest.approx([0.2, 0.2])
     assert websocket.text_messages[-1] == '{"type":"end"}'
+    session.close()
+
+
+@pytest.mark.parametrize("block_end", [False, True], ids=["pcm", "end"])
+def test_each_tencent_send_has_total_deadline_and_aborts_progressing_write(block_end):
+    websocket = ProgressingBlockedSendWebSocket(block_end=block_end)
+    session = TencentRealtimeSession(
+        realtime_config(write_timeout_s=0.03),
+        voice_id="voice-write-deadline",
+        connect_fn=lambda *_args, **_kwargs: websocket,
+    )
+    audio = np.zeros(3200 if not block_end else 0, dtype=np.float32)
+    started = time.monotonic()
+
+    if block_end:
+        websocket.provider_event({"code": 0, "voice_id": "voice-write-deadline", "final": 1})
+        with pytest.raises(RuntimeError, match="write deadline"):
+            session.finish(audio)
+    else:
+        session.push_snapshot(audio)
+        wait_until(lambda: websocket.closed)
+        with pytest.raises(RuntimeError, match="write deadline"):
+            session.push_snapshot(audio)
+
+    assert time.monotonic() - started < 0.15
+    assert websocket.progress_count >= 2
+    assert websocket.send_finished.wait(timeout=0.05)
     session.close()
 
 

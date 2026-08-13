@@ -182,7 +182,11 @@ class TencentRealtimeSession:
     def finish(self, audio: np.ndarray) -> None:
         self.push_snapshot(audio)
         self._put_frame(_END)
-        audio_wait_s = len(np.asarray(audio).reshape(-1)) / 16000 + self.config.write_timeout_s
+        audio_wait_s = (
+            len(np.asarray(audio).reshape(-1)) / 16000
+            + self.config.write_timeout_s
+            + min(self.config.close_timeout_s, 0.05)
+        )
         if not self._writer_done.wait(audio_wait_s):
             self._fail("Tencent realtime ASR writer deadline exceeded.")
         self._raise_if_failed()
@@ -204,7 +208,7 @@ class TencentRealtimeSession:
                 return
             self._closed = True
             self._cancelled.set()
-            self._close_socket()
+            self._abort_socket()
             try:
                 self._frames.put_nowait(_END)
             except queue.Full:
@@ -240,7 +244,7 @@ class TencentRealtimeSession:
                 except queue.Empty:
                     continue
                 if frame is _END:
-                    self._websocket.send('{"type":"end"}')
+                    self._send_with_deadline('{"type":"end"}')
                     return
                 assert isinstance(frame, bytes)
                 if origin is None:
@@ -249,13 +253,39 @@ class TencentRealtimeSession:
                 delay = target - self._clock()
                 if delay > 0:
                     self._sleep(delay)
-                self._websocket.send(frame)
+                self._send_with_deadline(frame)
                 samples_written += len(frame) // 2
+        except TimeoutError:
+            if not self._cancelled.is_set():
+                self._fail("Tencent realtime ASR write deadline exceeded.")
         except Exception:
             if not self._cancelled.is_set():
                 self._fail("Tencent realtime ASR write failed.")
         finally:
             self._writer_done.set()
+
+    def _send_with_deadline(self, message: bytes | str) -> None:
+        done = threading.Event()
+        errors: list[BaseException] = []
+
+        def send() -> None:
+            try:
+                self._websocket.send(message)
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                done.set()
+
+        worker = threading.Thread(target=send, name="tencent-asr-send", daemon=True)
+        worker.start()
+        if not done.wait(self.config.write_timeout_s):
+            # Record the write failure before closing the socket. Otherwise the
+            # reader can observe the close first and mask the real cause with a
+            # generic read error.
+            self._fail("Tencent realtime ASR write deadline exceeded.")
+            raise TimeoutError("Tencent realtime ASR write deadline exceeded.")
+        if errors:
+            raise errors[0]
 
     def _reader_loop(self) -> None:
         while not self._cancelled.is_set() and not self._terminal.is_set():
@@ -336,13 +366,31 @@ class TencentRealtimeSession:
                 self._error = RuntimeError(message)
         self._cancelled.set()
         self._terminal.set()
-        self._close_socket()
+        self._abort_socket()
 
-    def _close_socket(self) -> None:
+    def _abort_socket(self) -> None:
         with self._socket_close_lock:
             if self._socket_closed:
                 return
             self._socket_closed = True
+            close_socket = getattr(self._websocket, "close_socket", None)
+            if callable(close_socket):
+                try:
+                    close_socket()
+                    return
+                except Exception:
+                    pass
+            transport = getattr(self._websocket, "socket", None)
+            if transport is not None:
+                try:
+                    transport.shutdown(2)
+                except Exception:
+                    pass
+                try:
+                    transport.close()
+                    return
+                except Exception:
+                    pass
             try:
                 self._websocket.close()
             except Exception:
