@@ -71,6 +71,12 @@ class TencentRecognitionResult:
     stable: bool
 
 
+@dataclass(frozen=True)
+class TencentRecognitionCheckpoint:
+    text: str
+    audio_samples: int
+
+
 def build_tencent_realtime_url(
     config: TencentRealtimeConfig,
     *,
@@ -137,6 +143,7 @@ class TencentRealtimeSession:
         self._transcript_bytes = 0
         self._last_index = -1
         self._last_slice_type = -1
+        self._recognized_checkpoint: TencentRecognitionCheckpoint | None = None
         self._error: RuntimeError | None = None
         self.samples_sent = 0
         url = build_tencent_realtime_url(
@@ -202,6 +209,10 @@ class TencentRealtimeSession:
             except queue.Empty:
                 return drained
 
+    def recognized_checkpoint(self) -> TencentRecognitionCheckpoint | None:
+        with self._state_lock:
+            return self._recognized_checkpoint
+
     def close(self) -> None:
         with self._close_lock:
             if self._closed:
@@ -226,6 +237,7 @@ class TencentRealtimeSession:
             self._partials.clear()
             self._stable.clear()
             self._transcript_bytes = 0
+            self._recognized_checkpoint = None
 
     def _put_frame(self, frame: bytes | object) -> None:
         if self._cancelled.is_set():
@@ -325,6 +337,7 @@ class TencentRealtimeSession:
             slice_type = result.get("slice_type")
             index = result.get("index")
             text = result.get("voice_text_str", "")
+            end_time_ms = result.get("end_time")
             if slice_type not in (0, 1, 2) or not isinstance(index, int) or index < 0 or not isinstance(text, str):
                 raise ValueError("provider result fields are invalid")
             with self._state_lock:
@@ -338,6 +351,7 @@ class TencentRealtimeSession:
                     if self._transcript_bytes > self.config.max_transcript_bytes:
                         raise ValueError("provider transcript state is too large")
                     self._partials[index] = text
+                    self._update_recognized_checkpoint(end_time_ms)
                     self._queue_result(TencentRecognitionResult(text, final=False, stable=False))
                 elif slice_type == 2:
                     self._transcript_bytes -= len(self._partials.pop(index, "").encode())
@@ -346,6 +360,7 @@ class TencentRealtimeSession:
                     if self._transcript_bytes > self.config.max_transcript_bytes:
                         raise ValueError("provider transcript state is too large")
                     self._stable[index] = text
+                    self._update_recognized_checkpoint(end_time_ms)
 
         final = payload.get("final", 0)
         if final not in (0, 1):
@@ -355,6 +370,17 @@ class TencentRealtimeSession:
                 final_text = "".join(self._stable[index] for index in sorted(self._stable))
             self._queue_result(TencentRecognitionResult(final_text, final=True, stable=True))
             self._terminal.set()
+
+    def _update_recognized_checkpoint(self, end_time_ms: object) -> None:
+        if not isinstance(end_time_ms, int) or isinstance(end_time_ms, bool) or end_time_ms < 0:
+            return
+        indexes = sorted(set(self._stable) | set(self._partials))
+        text = "".join(self._stable.get(index, self._partials.get(index, "")) for index in indexes)
+        if text:
+            self._recognized_checkpoint = TencentRecognitionCheckpoint(
+                text=text,
+                audio_samples=end_time_ms * 16,
+            )
 
     def _queue_result(self, result: TencentRecognitionResult) -> None:
         try:

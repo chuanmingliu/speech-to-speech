@@ -10,6 +10,7 @@ import queue
 import threading
 import time
 import traceback
+from types import SimpleNamespace
 from urllib.parse import parse_qs, quote, urlsplit
 
 import numpy as np
@@ -162,8 +163,9 @@ class FakeRealtimeSession:
 
 
 class BlockingFinalSession(FakeRealtimeSession):
-    def __init__(self):
+    def __init__(self, checkpoint=None):
         super().__init__()
+        self.checkpoint = checkpoint
         self.finish_started = threading.Event()
         self.release_finish = threading.Event()
 
@@ -175,6 +177,9 @@ class BlockingFinalSession(FakeRealtimeSession):
     def close(self):
         super().close()
         self.release_finish.set()
+
+    def recognized_checkpoint(self):
+        return self.checkpoint
 
 
 class FakeSessionFactory:
@@ -408,6 +413,26 @@ def test_close_wakes_finish_waiting_for_a_provider_final_event():
     worker.join(timeout=0.1)
 
 
+def test_session_exposes_latest_partial_text_with_its_recognized_audio_boundary():
+    websocket = FakeWebSocket()
+    session = TencentRealtimeSession(
+        realtime_config(),
+        voice_id="voice-checkpoint",
+        connect_fn=lambda *_args, **_kwargs: websocket,
+    )
+    event = provider_result("voice-checkpoint", "你好", slice_type=1)
+    event["result"].update({"start_time": 160, "end_time": 880})
+
+    websocket.provider_event(event)
+    wait_until(lambda: bool(session.drain_results()))
+
+    checkpoint = session.recognized_checkpoint()
+    assert checkpoint is not None
+    assert checkpoint.text == "你好"
+    assert checkpoint.audio_samples == 14_080
+    session.close()
+
+
 @pytest.mark.parametrize(
     "event",
     [
@@ -629,6 +654,56 @@ def test_handler_aborts_stale_finalization_so_current_revision_is_not_queued_beh
     assert output.text == "current"
     assert output.turn_revision == 1
     assert old_session.closed is True
+
+
+def test_repeated_stale_finalizations_resume_after_each_recognized_audio_checkpoint():
+    from queue import Queue
+    from threading import Event
+
+    tracker = SpeculativeTurnTracker()
+    tracker.observe("turn", 0)
+    first = BlockingFinalSession(SimpleNamespace(text="first", audio_samples=80))
+    second = BlockingFinalSession(SimpleNamespace(text=" second", audio_samples=40))
+    current = FakeRealtimeSession()
+    current.results = [TencentRecognitionResult(" third", final=True, stable=True)]
+    sessions = iter((first, second, current))
+    queue_in = Queue()
+    queue_out = Queue()
+    stop = Event()
+    handler = TencentASRHandler(
+        stop,
+        queue_in=queue_in,
+        queue_out=queue_out,
+        setup_kwargs={
+            "app_id": "1250000000",
+            "secret_id": "sid",
+            "secret_key": "sentinel-secret",
+            "session_factory": lambda _config: next(sessions),
+        },
+    )
+    handler.speculative_turns = tracker
+    worker = threading.Thread(target=handler.run, daemon=True)
+    worker.start()
+
+    queue_in.put(VADAudio(audio=np.arange(100), mode="progressive", turn_id="turn", turn_revision=0))
+    queue_in.put(VADAudio(audio=np.arange(100), mode="final", turn_id="turn", turn_revision=0))
+    assert first.finish_started.wait(timeout=0.2)
+    tracker.observe("turn", 1)
+    queue_in.put(VADAudio(audio=np.arange(160), mode="progressive", turn_id="turn", turn_revision=1))
+    queue_in.put(VADAudio(audio=np.arange(160), mode="final", turn_id="turn", turn_revision=1))
+    assert second.finish_started.wait(timeout=0.2)
+    tracker.observe("turn", 2)
+    queue_in.put(VADAudio(audio=np.arange(200), mode="progressive", turn_id="turn", turn_revision=2))
+    queue_in.put(VADAudio(audio=np.arange(200), mode="final", turn_id="turn", turn_revision=2))
+
+    output = queue_out.get(timeout=0.2)
+    stop.set()
+    queue_in.put(b"END")
+    worker.join(timeout=0.5)
+
+    np.testing.assert_array_equal(second.finished[0], np.arange(80, 160))
+    np.testing.assert_array_equal(current.finished[0], np.arange(120, 200))
+    assert output.text == "first second third"
 
 
 def test_handler_requires_app_id_from_environment_without_logging_it(monkeypatch, caplog):

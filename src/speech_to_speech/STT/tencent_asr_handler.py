@@ -70,6 +70,11 @@ class TencentASRHandler(BaseSTTHandler):
                                 vad_audio.turn_id,
                                 vad_audio.turn_revision,
                             ):
+                                self._checkpoint_stale_session(
+                                    session,
+                                    vad_audio,
+                                    provider_audio_offset=len(vad_audio.audio) - len(provider_audio),
+                                )
                                 session.close()
                                 logger.info(
                                     "Tencent finalization cancelled for stale turn=%s rev=%s",
@@ -188,6 +193,31 @@ class TencentASRHandler(BaseSTTHandler):
         if self._has_checkpoint_for(vad_audio):
             return vad_audio.audio[self._checkpoint_samples :]
         return vad_audio.audio
+
+    def _checkpoint_stale_session(
+        self,
+        session: TencentRealtimeSession,
+        vad_audio: STTIn,
+        *,
+        provider_audio_offset: int,
+    ) -> None:
+        recognized_checkpoint = getattr(session, "recognized_checkpoint", None)
+        if not callable(recognized_checkpoint):
+            return
+        checkpoint = recognized_checkpoint()
+        if checkpoint is None or not checkpoint.text:
+            return
+        recognized_samples = min(
+            len(vad_audio.audio),
+            provider_audio_offset + checkpoint.audio_samples,
+        )
+        if recognized_samples <= self._checkpoint_samples:
+            return
+        prefix = self._checkpoint_prefix(vad_audio)
+        self._checkpoint_turn_id = vad_audio.turn_id
+        self._checkpoint_revision = vad_audio.turn_revision
+        self._checkpoint_samples = recognized_samples
+        self._checkpoint_text = f"{prefix}{checkpoint.text}".strip()
 
     def _close_active(self) -> None:
         session, self._active_session = self._active_session, None
