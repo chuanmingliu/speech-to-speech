@@ -3,12 +3,11 @@ from __future__ import annotations
 import io
 import json
 import logging
-import socket
 import ssl
 import time
 from collections import deque
 from queue import Queue
-from threading import Event
+from threading import Event, Thread
 from typing import Any, Callable
 
 import av
@@ -144,20 +143,42 @@ class FakeSocket:
         self.options.append((level, option, value))
 
 
-class DeadlineAwareBlockedSendConnection(FakeClientConnection):
+class ProgressingBlockedSendConnection(FakeClientConnection):
     def __init__(self, received: list[str], block_on_send: int) -> None:
         super().__init__(received)
         self.block_on_send = block_on_send
+        self.progress_count = 0
+        self.send_finished = Event()
 
     def send(self, message: Any, text: bool | None = None) -> None:
         if len(self.sent) + 1 == self.block_on_send:
-            assert any(
-                level == socket.SOL_SOCKET and option == socket.SO_SNDTIMEO
-                for level, option, _ in self.socket.options
-            )
-            time.sleep(0.02)
-            raise TimeoutError("simulated bounded socket write")
+            started = time.monotonic()
+            try:
+                while not self.closed and time.monotonic() - started < 0.2:
+                    self.progress_count += 1
+                    time.sleep(0.005)
+                if not self.closed:
+                    raise RuntimeError("production deadline didn't abort the progressing write")
+                return
+            finally:
+                self.send_finished.set()
         super().send(message, text=text)
+
+
+class GracefulCloseBlockingConnection(FakeClientConnection):
+    def __init__(self, received: list[str | Exception | Callable[[], str]]) -> None:
+        super().__init__(received)
+        self.graceful_close_calls = 0
+        self.abort_calls = 0
+
+    def close(self, code: CloseCode | int = CloseCode.NORMAL_CLOSURE, reason: str = "") -> None:
+        self.graceful_close_calls += 1
+        time.sleep(0.2)
+        self.closed = True
+
+    def close_socket(self) -> None:
+        self.abort_calls += 1
+        self.closed = True
 
 
 class FakeDecoder:
@@ -353,7 +374,44 @@ def test_handler_stop_event_aborts_handshake_wait_promptly() -> None:
     assert websocket.closed is True
 
 
-def test_each_websocket_write_is_deadline_bounded_and_fails_closed() -> None:
+def test_cancel_beats_delayed_connect_and_late_connection_self_aborts() -> None:
+    from speech_to_speech.TTS.minimax_tts_handler import MiniMaxStreamingClient, MiniMaxTTSConfig
+
+    cancelled = Event()
+    connect_returned = Event()
+    websocket = FakeClientConnection([_event("connected_success"), _event("task_started")])
+
+    def delayed_connect(uri: str, **kwargs: Any) -> FakeClientConnection:
+        time.sleep(0.2)
+        connect_returned.set()
+        return websocket
+
+    client = MiniMaxStreamingClient(
+        MiniMaxTTSConfig(
+            api_key="test-key",
+            voice_id="test-voice",
+            open_timeout_s=1.0,
+            read_poll_timeout_s=0.005,
+        ),
+        connect_fn=delayed_connect,
+        decoder_factory=FakeDecoder,
+    )
+    canceller = Thread(target=lambda: (time.sleep(0.01), cancelled.set()))
+    canceller.start()
+    started_at = time.monotonic()
+
+    client.start(cancelled=cancelled.is_set)
+
+    assert time.monotonic() - started_at < 0.1
+    canceller.join(timeout=0.1)
+    assert connect_returned.wait(timeout=0.3)
+    assert websocket.closed is True
+    assert websocket.sent == []
+    with np.testing.assert_raises(RuntimeError):
+        list(client.synthesize("late text", cancelled=lambda: False))
+
+
+def test_each_websocket_write_has_total_production_deadline_and_no_stuck_writer() -> None:
     from speech_to_speech.TTS.minimax_tts_handler import MiniMaxStreamingClient, MiniMaxTTSConfig
 
     scenarios = (
@@ -370,9 +428,9 @@ def test_each_websocket_write_is_deadline_bounded_and_fails_closed() -> None:
         ),
     )
     for block_on_send, received, operation in scenarios:
-        websocket = DeadlineAwareBlockedSendConnection(received, block_on_send)
+        websocket = ProgressingBlockedSendConnection(received, block_on_send)
         client = MiniMaxStreamingClient(
-            MiniMaxTTSConfig(api_key="test-key", voice_id="test-voice", write_timeout_s=0.05),
+            MiniMaxTTSConfig(api_key="test-key", voice_id="test-voice", write_timeout_s=0.03),
             connect_fn=lambda uri, **kwargs: websocket,
             decoder_factory=FakeDecoder,
         )
@@ -391,6 +449,122 @@ def test_each_websocket_write_is_deadline_bounded_and_fails_closed() -> None:
 
         assert time.monotonic() - started_at < 0.2
         assert websocket.closed is True
+        assert websocket.progress_count >= 2
+        assert websocket.send_finished.wait(timeout=0.1)
+
+
+def test_error_and_stale_cleanup_abort_without_waiting_for_graceful_close() -> None:
+    from speech_to_speech.pipeline.messages import TTSInput
+    from speech_to_speech.pipeline.speculative_turns import SpeculativeTurnTracker
+    from speech_to_speech.TTS.minimax_tts_handler import MiniMaxStreamingClient, MiniMaxTTSConfig, MiniMaxTTSHandler
+
+    error_socket = GracefulCloseBlockingConnection(
+        [
+            _event("connected_success"),
+            _event("task_started"),
+            _event(data={"audio": "not-hex"}, is_final=True),
+        ]
+    )
+    client = MiniMaxStreamingClient(
+        MiniMaxTTSConfig(api_key="test-key", voice_id="test-voice"),
+        connect_fn=lambda uri, **kwargs: error_socket,
+        decoder_factory=FakeDecoder,
+    )
+    client.start()
+    started_at = time.monotonic()
+
+    with np.testing.assert_raises(RuntimeError):
+        list(client.synthesize("hello", cancelled=lambda: False))
+
+    assert time.monotonic() - started_at < 0.1
+    assert error_socket.abort_calls == 1
+    assert error_socket.graceful_close_calls == 0
+
+    stale_socket = GracefulCloseBlockingConnection(
+        [_event("connected_success"), _event("task_started"), _event(data={"audio": "01"}, is_final=True)]
+    )
+    tracker = SpeculativeTurnTracker()
+    tracker.observe("turn", 0)
+    handler = MiniMaxTTSHandler(
+        Event(),
+        queue_in=Queue(),
+        queue_out=Queue(),
+        setup_args=(Event(),),
+        setup_kwargs={
+            "api_key": "test-key",
+            "voice_id": "test-voice",
+            "speculative_turns": tracker,
+            "client_factory": lambda config: MiniMaxStreamingClient(
+                config,
+                connect_fn=lambda uri, **kwargs: stale_socket,
+                decoder_factory=FakeDecoder,
+            ),
+        },
+    )
+    list(handler.process(TTSInput(text="current", turn_id="turn", turn_revision=0)))
+    tracker.observe("turn", 1)
+    started_at = time.monotonic()
+
+    assert list(handler.process(TTSInput(text="stale", turn_id="turn", turn_revision=0))) == []
+
+    assert time.monotonic() - started_at < 0.1
+    assert stale_socket.abort_calls == 1
+    assert stale_socket.graceful_close_calls == 0
+
+
+def test_session_end_and_cleanup_cancel_inflight_connect_and_abort_late_socket() -> None:
+    from speech_to_speech.pipeline.messages import TTSInput
+    from speech_to_speech.TTS.minimax_tts_handler import MiniMaxStreamingClient, MiniMaxTTSHandler
+
+    for lifecycle_method in ("on_session_end", "cleanup"):
+        connect_started = Event()
+        connect_returned = Event()
+        websocket = GracefulCloseBlockingConnection([_event("connected_success"), _event("task_started")])
+
+        def delayed_connect(uri: str, **kwargs: Any) -> FakeClientConnection:
+            connect_started.set()
+            time.sleep(0.3)
+            connect_returned.set()
+            return websocket
+
+        handler = MiniMaxTTSHandler(
+            Event(),
+            queue_in=Queue(),
+            queue_out=Queue(),
+            setup_args=(Event(),),
+            setup_kwargs={
+                "api_key": "test-key",
+                "voice_id": "test-voice",
+                "client_factory": lambda config: MiniMaxStreamingClient(
+                    config,
+                    connect_fn=delayed_connect,
+                    decoder_factory=FakeDecoder,
+                ),
+            },
+        )
+        errors: list[BaseException] = []
+
+        def process() -> None:
+            try:
+                list(handler.process(TTSInput(text="hello")))
+            except BaseException as exc:
+                errors.append(exc)
+
+        processor = Thread(target=process)
+        processor.start()
+        assert connect_started.wait(timeout=0.1)
+        started_at = time.monotonic()
+
+        getattr(handler, lifecycle_method)()
+        processor.join(timeout=0.15)
+
+        assert time.monotonic() - started_at < 0.15
+        assert processor.is_alive() is False
+        assert errors == []
+        assert connect_returned.wait(timeout=0.4)
+        assert websocket.abort_calls == 1
+        assert websocket.graceful_close_calls == 0
+        assert websocket.sent == []
 
 
 def test_dependency_logging_cannot_emit_credentials_text_audio_or_provider_payload(caplog) -> None:

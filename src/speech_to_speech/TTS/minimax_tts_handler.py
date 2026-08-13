@@ -3,11 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import os
-import socket
 import ssl
-import struct
 from dataclasses import dataclass
-from threading import Event
+from threading import Event, Lock, Thread
 from time import monotonic
 from typing import Any, Callable, Iterator
 
@@ -57,6 +55,15 @@ class _MiniMaxCancelled(Exception):
     pass
 
 
+class _OperationState:
+    def __init__(self) -> None:
+        self.done = Event()
+        self.lock = Lock()
+        self.abandoned = False
+        self.result: Any = None
+        self.error: BaseException | None = None
+
+
 class MiniMaxStreamingClient:
     """One official MiniMax WebSocket T2A task."""
 
@@ -84,6 +91,9 @@ class MiniMaxStreamingClient:
         self._started = False
         self._finished = False
         self._closed = False
+        self._operation_guard = Lock()
+        self._operation_abandoned = False
+        self._close_requested = Event()
 
     def start(self, *, cancelled: Callable[[], bool] = lambda: False) -> None:
         if self._closed:
@@ -92,19 +102,24 @@ class MiniMaxStreamingClient:
             return
         tls = ssl.create_default_context()
         try:
-            self._websocket = self._connect(
-                self.config.endpoint,
-                ssl=tls,
-                additional_headers={"Authorization": f"Bearer {self.config.api_key}"},
-                proxy=None,
-                compression=None,
-                max_size=self.config.max_event_bytes,
-                max_queue=self.config.max_queue,
-                open_timeout=self.config.open_timeout_s,
-                close_timeout=self.config.close_timeout_s,
-                logger=_silent_dependency_logger(),
+            self._websocket = self._run_bounded_operation(
+                lambda: self._connect(
+                    self.config.endpoint,
+                    ssl=tls,
+                    additional_headers={"Authorization": f"Bearer {self.config.api_key}"},
+                    proxy=None,
+                    compression=None,
+                    max_size=self.config.max_event_bytes,
+                    max_queue=self.config.max_queue,
+                    open_timeout=self.config.open_timeout_s,
+                    close_timeout=self.config.close_timeout_s,
+                    logger=_silent_dependency_logger(),
+                ),
+                timeout_s=self.config.open_timeout_s,
+                cancelled=cancelled,
+                operation_name="connection",
+                late_result_cleanup=self._abort_connection,
             )
-            self._configure_write_deadline()
             self._expect_event("connected_success", cancelled=cancelled)
             self._send(
                 {
@@ -134,7 +149,7 @@ class MiniMaxStreamingClient:
             self._abort()
             return
         except Exception:
-            self.close()
+            self._abort()
             raise
 
     def synthesize(self, text: str, *, cancelled: Callable[[], bool]) -> Iterator[np.ndarray]:
@@ -178,7 +193,7 @@ class MiniMaxStreamingClient:
             self._abort()
             return
         except Exception:
-            self.close()
+            self._abort()
             raise
 
     def finish(self, *, cancelled: Callable[[], bool] = lambda: False) -> list[np.ndarray]:
@@ -202,65 +217,151 @@ class MiniMaxStreamingClient:
             self._abort()
             return []
         except Exception:
-            self.close()
+            self._abort()
             raise
 
-    def close(self) -> None:
+    def close(self, *, graceful: bool = False) -> None:
         if self._closed:
             return
+        self._close_requested.set()
         self._closed = True
         self._decoder.close()
         websocket, self._websocket = self._websocket, None
         if websocket is not None:
-            try:
-                websocket.close()
-            except Exception:
-                pass
+            if graceful:
+                try:
+                    websocket.close()
+                except Exception:
+                    self._abort_connection(websocket)
+            else:
+                self._abort_connection(websocket)
 
     def _abort(self) -> None:
         if self._closed:
             return
+        self._close_requested.set()
         self._closed = True
         self._decoder.close()
         websocket, self._websocket = self._websocket, None
         if websocket is not None:
-            close_socket = getattr(websocket, "close_socket", None)
-            if callable(close_socket):
-                try:
-                    close_socket()
-                    return
-                except Exception:
-                    pass
-            try:
-                websocket.close()
-            except Exception:
-                pass
+            self._abort_connection(websocket)
 
     def _send(self, message: dict[str, Any], *, cancelled: Callable[[], bool]) -> None:
         if self._websocket is None:
             raise RuntimeError("MiniMax WebSocket is not connected")
         if cancelled():
             raise _MiniMaxCancelled
-        self._websocket.send(json.dumps(message, separators=(",", ":")))
+        websocket = self._websocket
+        payload = json.dumps(message, separators=(",", ":"))
+        self._run_bounded_operation(
+            lambda: websocket.send(payload),
+            timeout_s=self.config.write_timeout_s,
+            cancelled=cancelled,
+            operation_name="write",
+        )
         if cancelled():
             raise _MiniMaxCancelled
 
-    def _configure_write_deadline(self) -> None:
-        if self._websocket is None:
-            raise RuntimeError("MiniMax WebSocket is not connected")
-        transport = getattr(self._websocket, "socket", None)
-        if transport is None or not hasattr(transport, "setsockopt"):
-            raise RuntimeError("MiniMax WebSocket transport cannot enforce write deadlines")
-        timeout = self.config.write_timeout_s
-        if timeout <= 0:
-            raise ValueError("write_timeout_s must be positive")
-        if os.name == "nt":
-            value: int | bytes = max(1, int(timeout * 1000))
-        else:
-            seconds = int(timeout)
-            microseconds = max(1, int((timeout - seconds) * 1_000_000))
-            value = struct.pack("ll", seconds, microseconds)
-        transport.setsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO, value)
+    def _run_bounded_operation(
+        self,
+        operation: Callable[[], Any],
+        *,
+        timeout_s: float,
+        cancelled: Callable[[], bool],
+        operation_name: str,
+        late_result_cleanup: Callable[[Any], None] | None = None,
+    ) -> Any:
+        if timeout_s <= 0:
+            raise ValueError(f"{operation_name} timeout must be positive")
+        if self._operation_abandoned:
+            raise RuntimeError("MiniMax client has an abandoned operation")
+        if not self._operation_guard.acquire(blocking=False):
+            raise RuntimeError("MiniMax client already has an operation in progress")
+        if self._operation_abandoned:
+            self._operation_guard.release()
+            raise RuntimeError("MiniMax client has an abandoned operation")
+        state = _OperationState()
+
+        def run() -> None:
+            try:
+                result = operation()
+            except BaseException as exc:
+                with state.lock:
+                    if state.abandoned:
+                        return
+                    state.error = exc
+                    state.done.set()
+                return
+            cleanup = False
+            with state.lock:
+                if state.abandoned:
+                    cleanup = late_result_cleanup is not None
+                else:
+                    state.result = result
+                    state.done.set()
+            if cleanup and late_result_cleanup is not None:
+                late_result_cleanup(result)
+
+        worker = Thread(target=run, name=f"minimax-{operation_name}", daemon=True)
+        worker.start()
+        deadline = monotonic() + timeout_s
+        try:
+            while True:
+                if self._close_requested.is_set() or cancelled():
+                    self._operation_abandoned = True
+                    self._abandon_operation(state, late_result_cleanup)
+                    raise _MiniMaxCancelled
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    self._operation_abandoned = True
+                    self._abandon_operation(state, late_result_cleanup)
+                    raise TimeoutError(f"MiniMax {operation_name} timed out")
+                if state.done.wait(min(self.config.read_poll_timeout_s, remaining)):
+                    if self._close_requested.is_set() or cancelled():
+                        self._operation_abandoned = True
+                        self._abandon_operation(state, late_result_cleanup)
+                        raise _MiniMaxCancelled
+                    break
+            if state.error is not None:
+                raise state.error
+            return state.result
+        finally:
+            self._operation_guard.release()
+
+    @staticmethod
+    def _abandon_operation(
+        state: _OperationState,
+        late_result_cleanup: Callable[[Any], None] | None,
+    ) -> None:
+        result: Any = None
+        cleanup = False
+        with state.lock:
+            state.abandoned = True
+            if state.done.is_set() and state.error is None and late_result_cleanup is not None:
+                result = state.result
+                cleanup = True
+        if cleanup:
+            late_result_cleanup(result)
+
+    @staticmethod
+    def _abort_connection(websocket: Any) -> None:
+        close_socket = getattr(websocket, "close_socket", None)
+        if callable(close_socket):
+            try:
+                close_socket()
+                return
+            except Exception:
+                pass
+        transport = getattr(websocket, "socket", None)
+        if transport is not None:
+            try:
+                transport.shutdown(2)
+            except Exception:
+                pass
+            try:
+                transport.close()
+            except Exception:
+                pass
 
     def _expect_event(self, expected: str, *, cancelled: Callable[[], bool]) -> dict[str, Any]:
         event = self._receive_event(cancelled=cancelled)
@@ -362,7 +463,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
                     else:
                         for block in client.finish(cancelled=self._active_cancelled):
                             yield block
-                        self._close_active_client()
+                        self._close_active_client(graceful=True)
                 except Exception:
                     self._close_active_client()
                     raise
@@ -404,6 +505,8 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             except Exception:
                 self._close_active_client()
                 raise
+            if self._active_client is not client:
+                return
             if self._active_cancelled():
                 self._close_active_client()
                 return
@@ -425,12 +528,12 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             and self.cancel_scope.is_stale(self._active_generation)
         )
 
-    def _close_active_client(self) -> None:
+    def _close_active_client(self, *, graceful: bool = False) -> None:
         client, self._active_client = self._active_client, None
         self._active_generation = None
         self._active_turn = None
         if client is not None:
-            client.close()
+            client.close(graceful=graceful)
 
     def _close_active_client_for(self, turn: tuple[str | None, int | None]) -> None:
         if self._active_turn == turn:
