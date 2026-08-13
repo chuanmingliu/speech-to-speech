@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import io
+import json
 import logging
 import queue
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
 
+import av
 import numpy as np
 from openai.types.realtime.realtime_session_create_request import RealtimeSessionCreateRequest
 
@@ -30,7 +34,8 @@ from speech_to_speech.s2s_pipeline import parse_arguments
 from speech_to_speech.STT.tencent_asr_handler import TencentASRHandler
 from speech_to_speech.STT.tencent_realtime_client import TencentRecognitionResult
 from speech_to_speech.STT.transcription_notifier import TranscriptionNotifier
-from speech_to_speech.TTS.minimax_tts_handler import MiniMaxTTSHandler
+from speech_to_speech.TTS.incremental_mp3_decoder import IncrementalMP3Decoder
+from speech_to_speech.TTS.minimax_tts_handler import MiniMaxStreamingClient, MiniMaxTTSHandler
 
 
 class _FakeCompletions:
@@ -412,3 +417,281 @@ def test_minimax_barge_in_records_closure_and_last_accepted_audio(caplog):
 
     assert "MiniMax barge-in close latency: 0.300s (turn=turn-1 rev=2)" in caplog.text
     assert "MiniMax last accepted audio offset from barge-in: -1.800s (turn=turn-1 rev=2)" in caplog.text
+
+
+def _encoded_pipeline_mp3() -> bytes:
+    samples = np.asarray(
+        np.sin(2 * np.pi * 330 * np.arange(12_000, dtype=np.float64) / 24_000) * 10_000,
+        dtype=np.int16,
+    )
+    output = io.BytesIO()
+    container = av.open(output, mode="w", format="mp3")
+    stream = container.add_stream("mp3", rate=24_000)
+    stream.layout = "mono"
+    frame = av.AudioFrame.from_ndarray(samples.reshape(1, -1), format="s16", layout="mono")
+    frame.sample_rate = 24_000
+    for packet in stream.encode(frame):
+        container.mux(packet)
+    for packet in stream.encode(None):
+        container.mux(packet)
+    container.close()
+    return output.getvalue()
+
+
+def _minimax_event(event: str | None = None, **fields) -> str:
+    payload = {"base_resp": {"status_code": 0, "status_msg": "success"}, **fields}
+    if event is not None:
+        payload["event"] = event
+    return json.dumps(payload)
+
+
+class _PipelineMiniMaxSocket:
+    def __init__(self, received):
+        self.received = deque(received)
+        self.sent = []
+        self.closed = False
+
+    def recv(self, timeout=None, decode=None):
+        if not self.received:
+            raise TimeoutError
+        item = self.received.popleft()
+        return item() if callable(item) else item
+
+    def send(self, message, text=None):
+        self.sent.append(json.loads(message))
+
+    def close(self, code=1000, reason=""):
+        self.closed = True
+
+    def close_socket(self):
+        self.closed = True
+
+
+def test_end_to_end_provider_streaming_timing_order_and_barge_in_fencing():
+    """Exercise every real stage while replacing only provider transports."""
+
+    class TencentSession:
+        def __init__(self):
+            self.results = []
+            self.closed = False
+            self.terminal = threading.Event()
+            self.snapshots = []
+
+        def push_snapshot(self, audio):
+            self.snapshots.append(audio.copy())
+            self.results = [TencentRecognitionResult("live words", final=False, stable=False)]
+
+        def finish(self, audio):
+            self.snapshots.append(audio.copy())
+            self.terminal.set()
+            self.results = [TencentRecognitionResult("final words", final=True, stable=True)]
+
+        def drain_results(self):
+            results, self.results = self.results, []
+            return results
+
+        def close(self):
+            self.closed = True
+            self.results.clear()
+
+    sessions = []
+
+    def session_factory(_config):
+        session = TencentSession()
+        sessions.append(session)
+        return session
+
+    stt = TencentASRHandler(
+        threading.Event(),
+        queue.Queue(),
+        queue.Queue(),
+        setup_kwargs={
+            "app_id": "app",
+            "secret_id": "id",
+            "secret_key": "key",
+            "session_factory": session_factory,
+        },
+    )
+    runtime = _request().runtime_config
+    transcript_events = queue.Queue()
+    notifier = TranscriptionNotifier(
+        threading.Event(),
+        queue.Queue(),
+        queue.Queue(),
+        setup_kwargs={"text_output_queue": transcript_events, "runtime_config": runtime},
+    )
+    processor = LMOutputProcessor(
+        threading.Event(),
+        queue.Queue(),
+        queue.Queue(),
+        setup_kwargs={"text_output_queue": queue.Queue()},
+    )
+
+    progressive_audio = np.arange(3_200, dtype=np.int16)
+    partial = list(
+        stt.process(
+            VADAudio(
+                audio=progressive_audio,
+                mode="progressive",
+                turn_id="turn-e2e",
+                turn_revision=0,
+            )
+        )
+    )[0]
+    assert isinstance(partial, PartialTranscription)
+    assert sessions[0].terminal.is_set() is False
+    assert list(notifier.process(partial)) == []
+
+    final_audio = np.arange(6_400, dtype=np.int16)
+    final = list(
+        stt.process(
+            VADAudio(
+                audio=final_audio,
+                mode="final",
+                turn_id="turn-e2e",
+                turn_revision=0,
+            )
+        )
+    )[0]
+    assert isinstance(final, Transcription)
+    assert sessions[0].terminal.is_set() is True
+    llm_request = list(notifier.process(final))[0]
+
+    llm_terminal = threading.Event()
+    llm_stream = _ControlledStream(llm_terminal, first_text="Ready now. Waiting")
+    llm = _handler(stream_batch_sentences=1)
+    llm.client.chat.completions.create = lambda **_kwargs: llm_stream
+    llm_output = llm.process(llm_request)
+    first_sentence = next(llm_output)
+    assert first_sentence.text == "Ready now."
+    assert llm_terminal.is_set() is False
+    tts_input = list(processor.process(first_sentence))[0]
+
+    encoded = _encoded_pipeline_mp3()
+    tts_terminal = threading.Event()
+
+    def terminal_audio_event():
+        assert tts_terminal.wait(timeout=1.0)
+        return _minimax_event(data={}, is_final=True)
+
+    websocket = _PipelineMiniMaxSocket(
+        [
+            _minimax_event("connected_success"),
+            _minimax_event("task_started"),
+            _minimax_event(data={"audio": encoded.hex()}, is_final=False),
+            terminal_audio_event,
+            _minimax_event(data={}, is_final=True),
+            _minimax_event("task_finished"),
+        ]
+    )
+    tts = MiniMaxTTSHandler(
+        threading.Event(),
+        queue.Queue(),
+        queue.Queue(),
+        setup_args=(threading.Event(),),
+        setup_kwargs={
+            "api_key": "key",
+            "voice_id": "voice",
+            "client_factory": lambda config: MiniMaxStreamingClient(
+                config,
+                connect_fn=lambda _uri, **_kwargs: websocket,
+            ),
+        },
+    )
+    audio_output = tts.process(tts_input)
+    first_pcm = next(audio_output)
+    assert first_pcm.dtype == np.int16 and first_pcm.shape == (512,)
+    assert tts_terminal.is_set() is False
+    tts_terminal.set()
+    streamed_pcm = [first_pcm, *list(audio_output)]
+
+    llm_terminal.set()
+    remaining_llm = list(llm_output)
+    for item in remaining_llm:
+        for end_input in processor.process(item):
+            streamed_pcm.extend(block for block in tts.process(end_input) if isinstance(block, np.ndarray))
+
+    reference_decoder = IncrementalMP3Decoder()
+    reference_pcm = reference_decoder.feed(encoded) + reference_decoder.finish()
+    assert len(streamed_pcm) == len(reference_pcm)
+    assert all(np.array_equal(actual, expected) for actual, expected in zip(streamed_pcm, reference_pcm))
+    assert [message["event"] for message in websocket.sent] == [
+        "task_start",
+        "task_continue",
+        "task_continue",
+        "task_finish",
+    ]
+
+    # A revision change closes Tencent's prior provider session; late results
+    # cannot re-enter the handler after ownership has moved to the new turn.
+    old_session = TencentSession()
+    new_session = TencentSession()
+    stale_sessions = iter((old_session, new_session))
+    stale_stt = TencentASRHandler(
+        threading.Event(),
+        queue.Queue(),
+        queue.Queue(),
+        setup_kwargs={
+            "app_id": "app",
+            "secret_id": "id",
+            "secret_key": "key",
+            "session_factory": lambda _config: next(stale_sessions),
+        },
+    )
+    list(stale_stt.process(VADAudio(audio=np.zeros(1), mode="progressive", turn_id="barge", turn_revision=0)))
+    list(stale_stt.process(VADAudio(audio=np.zeros(1), mode="progressive", turn_id="barge", turn_revision=1)))
+    assert old_session.closed is True
+    old_session.results = [TencentRecognitionResult("late", final=True, stable=True)]
+    old_session.close()
+    assert old_session.drain_results() == []
+
+    cancel_scope = CancelScope()
+    blocked_llm = _CloseReleasedStream()
+    cancelled_llm = _handler(stream_batch_sentences=1, cancel_scope=cancel_scope)
+    cancelled_llm.client.chat.completions.create = lambda **_kwargs: blocked_llm
+    late_llm_outputs = []
+    llm_done = threading.Event()
+
+    def consume_cancelled_llm():
+        late_llm_outputs.extend(cancelled_llm.process(_request()))
+        llm_done.set()
+
+    llm_worker = threading.Thread(target=consume_cancelled_llm, daemon=True)
+    llm_worker.start()
+    assert blocked_llm.blocked.wait(timeout=0.2)
+    cancel_scope.cancel()
+    assert blocked_llm.closed.wait(timeout=0.2)
+    assert llm_done.wait(timeout=0.2)
+    assert all("STALE_PROVIDER_TEXT" not in item.text for item in late_llm_outputs if isinstance(item, LLMResponseChunk))
+
+    tts_cancel_scope = CancelScope()
+    late_audio = np.full(512, 9, dtype=np.int16).tobytes().hex()
+    cancelled_socket = _PipelineMiniMaxSocket(
+        [
+            _minimax_event("connected_success"),
+            _minimax_event("task_started"),
+            _minimax_event(data={"audio": encoded.hex()}, is_final=False),
+            _minimax_event(data={"audio": late_audio}, is_final=True),
+        ]
+    )
+    cancelled_tts = MiniMaxTTSHandler(
+        threading.Event(),
+        queue.Queue(),
+        queue.Queue(),
+        setup_args=(threading.Event(),),
+        setup_kwargs={
+            "api_key": "key",
+            "voice_id": "voice",
+            "cancel_scope": tts_cancel_scope,
+            "client_factory": lambda config: MiniMaxStreamingClient(
+                config,
+                connect_fn=lambda _uri, **_kwargs: cancelled_socket,
+            ),
+        },
+    )
+    cancelled_audio = cancelled_tts.process(TTSInput(text="cancel me", turn_id="barge", turn_revision=1))
+    first_accepted = next(cancelled_audio)
+    tts_cancel_scope.cancel()
+    assert list(cancelled_audio) == []
+    assert first_accepted.shape == (512,)
+    assert cancelled_socket.closed is True

@@ -161,7 +161,7 @@ This installs the package in editable mode and makes the `speech-to-speech` CLI 
 | STT | [Lightning Whisper MLX](https://github.com/mustafaaljadery/lightning-whisper-mlx) | Apple Silicon | `whisper-mlx` |
 | STT | [MLX Audio Whisper](https://github.com/huggingface/mlx-audio) | Apple Silicon | built-in on macOS |
 | STT | [Paraformer](https://github.com/modelscope/FunASR) | CUDA / CPU | `paraformer` |
-| STT | [Tencent Cloud SentenceRecognition](https://cloud.tencent.com/document/product/1093/35646) | hosted API | `tencent-asr` |
+| STT | [Tencent Realtime Speech Recognition](https://cloud.tencent.com/document/product/1093/48982) | hosted WebSocket API | built-in |
 | LLM | OpenAI-compatible API (`responses-api`, `chat-completions`) | hosted providers or self-hosted servers | built-in |
 | LLM | [Transformers](https://huggingface.co/models?pipeline_tag=text-generation&sort=trending) | CUDA / CPU | built-in |
 | LLM | [mlx-lm](https://github.com/ml-explore/mlx-lm) | Apple Silicon | built-in on macOS |
@@ -170,56 +170,89 @@ This installs the package in editable mode and makes the `speech-to-speech` CLI 
 | TTS | [Pocket TTS](https://github.com/kyutai-labs/pocket-tts) | CPU / CUDA | `pocket` |
 | TTS | [ChatTTS](https://github.com/2noise/ChatTTS) | CUDA / CPU | `chattts` |
 | TTS | [MMS TTS](https://huggingface.co/docs/transformers/model_doc/mms) | CUDA / CPU | `facebook-mms` |
-| TTS | [MiniMax T2A](https://platform.minimax.io/docs/api-reference/speech-t2a-http) | hosted API | built-in |
+| TTS | [MiniMax WebSocket T2A](https://platform.minimax.io/docs/api-reference/speech-t2a-websocket) | hosted WebSocket API | built-in |
 
 Select implementations with `--stt`, `--llm_backend`, and `--tts`. Run `speech-to-speech -h` for exact values and backend-specific flags.
 
 ### Tencent ASR + DeepSeek + MiniMax TTS
 
-This hosted-provider profile keeps credentials in the environment. Copy the safe
-template, fill in fresh keys plus a valid MiniMax voice ID, and load it:
+This profile is provider-native streaming from microphone to speaker:
+
+1. Tencent Realtime ASR receives cumulative microphone snapshots as suffix-only
+   16 kHz mono PCM16 over WebSocket and publishes live partial transcripts.
+2. Only Tencent's final transcript enters DeepSeek. DeepSeek streams
+   `deepseek-v4-flash` tokens with thinking disabled; each completed sentence is
+   sent to speech synthesis immediately.
+3. MiniMax T2A v2 streams MP3 over one WebSocket task per assistant response.
+   The server incrementally decodes it into ordered 16 kHz mono PCM16 blocks for
+   the browser.
+
+Credentials stay in server environment variables. Create a private environment
+file from the names-only template, then fill in your own values:
 
 ```bash
-cp .env.custom.example .env.local
+cp .env.example .env.local
+# Edit .env.local; never commit it.
 set -a
 source .env.local
 set +a
 export OPENAI_API_KEY="$DEEPSEEK_API_KEY"
 ```
 
-Install the Tencent SDK and launch the checked-in realtime profile:
+Required values are `TENCENT_ASR_APP_ID`, `TENCENT_ASR_SECRET_ID`,
+`TENCENT_ASR_SECRET_KEY`, `DEEPSEEK_API_KEY`, `MINIMAX_TTS_API_KEY`, and
+`MINIMAX_TTS_VOICE_ID`. Optional selectors are `TENCENT_ASR_ENGINE` (default
+`16k_zh`), `TENCENT_ASR_LANGUAGE` (default `zh`), `MINIMAX_TTS_MODEL` (default
+`speech-2.8-turbo`), and `MINIMAX_TTS_LANGUAGE_BOOST` (default `auto`). The
+streaming MiniMax implementation accepts the official global WebSocket endpoint
+`wss://api.minimax.io/ws/v1/t2a_v2` only.
+
+Install and launch the checked-in realtime profile:
 
 ```bash
-pip install "speech-to-speech[tencent-asr]"
-speech-to-speech configs/tencent-deepseek-minimax.json
+uv sync
+uv run speech-to-speech configs/tencent-deepseek-minimax.json
 ```
 
-The server listens at `ws://localhost:8765/v1/realtime`. Tencent
-`SentenceRecognition` is called only for VAD-finalized utterances, so live partial
-transcription is disabled in this profile. MiniMax uses synchronous T2A HTTP output
-and converts its 16 kHz mono WAV response into the pipeline's PCM16 chunks. Set
-`MINIMAX_TTS_ENDPOINT=https://api.minimaxi.com/v1/t2a_v2` for China-platform
-keys or `https://api.minimax.io/v1/t2a_v2` for global-platform keys.
+The server listens at `ws://localhost:8765/v1/realtime`. The provider protocols
+are Tencent Realtime Speech Recognition WebSocket v2, DeepSeek's
+OpenAI-compatible streaming Chat Completions API, and MiniMax WebSocket T2A v2.
+Provider credentials remain behind this server-side endpoint.
 
-For a live provider smoke test:
+For the bundled browser demo, use the launcher instead:
 
 ```bash
-set -a && source .env.local && set +a
-uv run --extra tencent-asr python scripts/smoke_custom_services.py
+uv run python scripts/run_custom_services_test_app.py
 ```
 
-To launch both the backend and the bundled browser voice app:
+Open `http://127.0.0.1:7860`, click the center orb, allow microphone and speaker
+access, and speak. The page shows partial/final user text, assistant text, and
+plays streamed audio. Press `Ctrl-C` in the launcher terminal to stop both
+processes. The launcher uses backend port `8765` when available and selects a
+free port if it is occupied; use `--backend-port` or `--app-port` to request a
+specific port.
+
+Content-free INFO logs confirm the low-latency path without exposing transcript
+or audio content. Look for `Tencent first partial latency`, `Tencent final
+latency`, `Provider stream first delta latency`, `MiniMax request to first audio
+latency`, and `Speech end to first audio latency`. A fake-provider acceptance
+test (no credentials or network calls) is also available:
 
 ```bash
-uv run --extra tencent-asr python scripts/run_custom_services_test_app.py
+PYTHONPATH=src .venv/bin/pytest -q tests/test_provider_streaming_pipeline.py -k end_to_end
 ```
 
-Then open `http://127.0.0.1:7860`, click the center orb, allow microphone
-access, and speak. The page displays user/assistant transcripts and plays
-MiniMax audio. Press `Ctrl-C` in the launcher terminal to stop both processes.
-The launcher uses backend port `8765` when available and automatically selects
-a free port if it is occupied. Use `--backend-port` or `--app-port` to request
-different ports.
+Manual barge-in check: start a long spoken reply, then begin speaking while the
+assistant is still talking. Playback should stop promptly, the new user partial
+should appear, and no text or audio from the interrupted response should resume.
+
+| Symptom | Check |
+|---|---|
+| No partial user text | Confirm microphone permission, `enable_live_transcription: true`, all three Tencent values, and `TENCENT_ASR_APP_ID` in particular. |
+| Partial text appears but no reply | Confirm DeepSeek key access, `deepseek-v4-flash`, `responses_api_stream: true`, and `responses_api_disable_thinking: true`. Only a final Tencent transcript starts the LLM. |
+| Assistant text appears but no sound | Confirm the MiniMax key and voice ID belong to the global platform and the endpoint is `wss://api.minimax.io/ws/v1/t2a_v2`. |
+| Audio stutters or is out of order | Avoid proxying/repacking binary audio, keep one client connection, and inspect server warnings for playback backpressure or provider timeouts. |
+| Interrupted speech returns later | Confirm the client sends the Realtime cancellation/barge-in events and keep the checked-in turn/revision fencing enabled. |
 
 ## Run Modes
 
