@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import ssl
+import struct
 from dataclasses import dataclass
 from threading import Event
 from time import monotonic
@@ -22,6 +24,14 @@ from speech_to_speech.TTS.incremental_mp3_decoder import IncrementalMP3Decoder
 logger = logging.getLogger(__name__)
 
 
+def _silent_dependency_logger() -> logging.Logger:
+    dependency_logger = logging.Logger("speech_to_speech.minimax.private_websocket", level=logging.CRITICAL + 1)
+    dependency_logger.disabled = True
+    dependency_logger.propagate = False
+    dependency_logger.addHandler(logging.NullHandler())
+    return dependency_logger
+
+
 @dataclass(frozen=True)
 class MiniMaxTTSConfig:
     api_key: str
@@ -36,6 +46,7 @@ class MiniMaxTTSConfig:
     open_timeout_s: float = 10.0
     close_timeout_s: float = 5.0
     read_poll_timeout_s: float = 0.1
+    write_timeout_s: float = 0.1
     event_timeout_s: float = 30.0
     max_event_bytes: int = 1024 * 1024
     max_audio_bytes: int = 512 * 1024
@@ -74,7 +85,7 @@ class MiniMaxStreamingClient:
         self._finished = False
         self._closed = False
 
-    def start(self) -> None:
+    def start(self, *, cancelled: Callable[[], bool] = lambda: False) -> None:
         if self._closed:
             raise RuntimeError("MiniMax client is closed")
         if self._started:
@@ -91,8 +102,10 @@ class MiniMaxStreamingClient:
                 max_queue=self.config.max_queue,
                 open_timeout=self.config.open_timeout_s,
                 close_timeout=self.config.close_timeout_s,
+                logger=_silent_dependency_logger(),
             )
-            self._expect_event("connected_success")
+            self._configure_write_deadline()
+            self._expect_event("connected_success", cancelled=cancelled)
             self._send(
                 {
                     "event": "task_start",
@@ -110,10 +123,16 @@ class MiniMaxStreamingClient:
                         "format": "mp3",
                         "channel": self.config.channels,
                     },
-                }
+                },
+                cancelled=cancelled,
             )
-            self._expect_event("task_started")
+            self._expect_event("task_started", cancelled=cancelled)
+            if cancelled():
+                raise _MiniMaxCancelled
             self._started = True
+        except _MiniMaxCancelled:
+            self._abort()
+            return
         except Exception:
             self.close()
             raise
@@ -122,10 +141,10 @@ class MiniMaxStreamingClient:
         if not self._started or self._finished or self._closed:
             raise RuntimeError("MiniMax task is not active")
         if cancelled():
-            self.close()
+            self._abort()
             return
         try:
-            self._send({"event": "task_continue", "text": text})
+            self._send({"event": "task_continue", "text": text}, cancelled=cancelled)
             while True:
                 event = self._receive_event(cancelled=cancelled)
                 event_name = event.get("event")
@@ -156,13 +175,13 @@ class MiniMaxStreamingClient:
                 if cancelled():
                     raise _MiniMaxCancelled
         except _MiniMaxCancelled:
-            self.close()
+            self._abort()
             return
         except Exception:
             self.close()
             raise
 
-    def finish(self) -> list[np.ndarray]:
+    def finish(self, *, cancelled: Callable[[], bool] = lambda: False) -> list[np.ndarray]:
         if self._closed:
             return []
         if not self._started:
@@ -170,11 +189,18 @@ class MiniMaxStreamingClient:
         if self._finished:
             return []
         try:
-            self._send({"event": "task_finish"})
-            self._expect_event("task_finished")
+            self._send({"event": "task_finish"}, cancelled=cancelled)
+            self._expect_event("task_finished", cancelled=cancelled)
+            if cancelled():
+                raise _MiniMaxCancelled
             blocks = self._decoder.finish()
+            if cancelled():
+                raise _MiniMaxCancelled
             self._finished = True
             return blocks
+        except _MiniMaxCancelled:
+            self._abort()
+            return []
         except Exception:
             self.close()
             raise
@@ -191,13 +217,53 @@ class MiniMaxStreamingClient:
             except Exception:
                 pass
 
-    def _send(self, message: dict[str, Any]) -> None:
+    def _abort(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._decoder.close()
+        websocket, self._websocket = self._websocket, None
+        if websocket is not None:
+            close_socket = getattr(websocket, "close_socket", None)
+            if callable(close_socket):
+                try:
+                    close_socket()
+                    return
+                except Exception:
+                    pass
+            try:
+                websocket.close()
+            except Exception:
+                pass
+
+    def _send(self, message: dict[str, Any], *, cancelled: Callable[[], bool]) -> None:
         if self._websocket is None:
             raise RuntimeError("MiniMax WebSocket is not connected")
+        if cancelled():
+            raise _MiniMaxCancelled
         self._websocket.send(json.dumps(message, separators=(",", ":")))
+        if cancelled():
+            raise _MiniMaxCancelled
 
-    def _expect_event(self, expected: str) -> dict[str, Any]:
-        event = self._receive_event(cancelled=lambda: False)
+    def _configure_write_deadline(self) -> None:
+        if self._websocket is None:
+            raise RuntimeError("MiniMax WebSocket is not connected")
+        transport = getattr(self._websocket, "socket", None)
+        if transport is None or not hasattr(transport, "setsockopt"):
+            raise RuntimeError("MiniMax WebSocket transport cannot enforce write deadlines")
+        timeout = self.config.write_timeout_s
+        if timeout <= 0:
+            raise ValueError("write_timeout_s must be positive")
+        if os.name == "nt":
+            value: int | bytes = max(1, int(timeout * 1000))
+        else:
+            seconds = int(timeout)
+            microseconds = max(1, int((timeout - seconds) * 1_000_000))
+            value = struct.pack("ll", seconds, microseconds)
+        transport.setsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO, value)
+
+    def _expect_event(self, expected: str, *, cancelled: Callable[[], bool]) -> dict[str, Any]:
+        event = self._receive_event(cancelled=cancelled)
         if event.get("event") != expected:
             raise RuntimeError("MiniMax returned an event out of order")
         return event
@@ -286,7 +352,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
                 tts_input.turn_id,
                 tts_input.turn_revision,
             ):
-                self._close_active_client()
+                self._close_active_client_for((tts_input.turn_id, tts_input.turn_revision))
                 return
             client = self._active_client
             if client is not None:
@@ -294,7 +360,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
                     if self._active_cancelled():
                         self._close_active_client()
                     else:
-                        for block in client.finish():
+                        for block in client.finish(cancelled=self._active_cancelled):
                             yield block
                         self._close_active_client()
                 except Exception:
@@ -307,7 +373,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             tts_input.turn_id,
             tts_input.turn_revision,
         ):
-            self._close_active_client()
+            self._close_active_client_for((tts_input.turn_id, tts_input.turn_revision))
             logger.debug(
                 "Dropping stale MiniMax TTS input for turn=%s rev=%s",
                 tts_input.turn_id,
@@ -330,14 +396,17 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             return
         if self._active_client is None:
             client = self._client_factory(self._config)
-            try:
-                client.start()
-            except Exception:
-                client.close()
-                raise
             self._active_client = client
             self._active_generation = generation
             self._active_turn = turn
+            try:
+                client.start(cancelled=self._active_cancelled)
+            except Exception:
+                self._close_active_client()
+                raise
+            if self._active_cancelled():
+                self._close_active_client()
+                return
 
         client = self._active_client
         assert client is not None
@@ -350,7 +419,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             self._close_active_client()
 
     def _active_cancelled(self) -> bool:
-        return (
+        return self.stop_event.is_set() or (
             self._active_generation is not None
             and self.cancel_scope is not None
             and self.cancel_scope.is_stale(self._active_generation)
@@ -362,6 +431,10 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         self._active_turn = None
         if client is not None:
             client.close()
+
+    def _close_active_client_for(self, turn: tuple[str | None, int | None]) -> None:
+        if self._active_turn == turn:
+            self._close_active_client()
 
     def on_session_end(self) -> None:
         self._close_active_client()
