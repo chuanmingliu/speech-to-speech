@@ -47,6 +47,51 @@ git diff --check
 passed
 ```
 
-## Concern
+## Review Fixes
 
-The broader pre-Task-3 Tencent suite has one whole-model equality assertion that expects `first_partial_at_s=None`; the handler now intentionally populates that new optional field. The Task 3 brief does not authorize changing `tests/test_tencent_realtime_asr.py`, so it was left untouched for the owning follow-up task.
+Independent review requested two P1 and three P2 fixes. All were addressed in a cohesive follow-up:
+
+- Serialized provider stream closure behind one idempotent owner. A delayed-close fake proves cancellation and final cleanup never call `close()` concurrently or more than once.
+- Treats iteration errors caused by stale/cancelled stream closure as normal cancellation, producing `EndOfResponse(error=None)` and no stale text.
+- Removed transcript/generated-content logging from the transcription notifier, shared OpenAI-compatible handler, and LM output processor. Non-cancellation provider failures now log only the exception type.
+- Strengthened privacy coverage to DEBUG through the real notifier and LM output processor, while actually exercising transcript, API key, signature, raw provider JSON, and decoded audio sentinels.
+- Renamed shared LLM metrics to provider-neutral event names.
+- Added `speakable_phrase_at_s` propagation so phrase dispatch is measured from the completed speakable phrase, not MiniMax client construction.
+- Records the cancellation instant in `CancelScope`; provider closure metrics now measure from that barge-in instant.
+- Added MiniMax provider-close timing and a signed last-accepted-audio offset from barge-in.
+- Updated the existing Tencent regression to assert semantic fields plus finite, monotonic partial/final timestamps.
+
+### Review Verification
+
+```text
+PYTHONPATH=src .venv/bin/pytest -q -p no:cacheprovider \
+  tests/test_provider_streaming_pipeline.py \
+  tests/test_chat_completions_backend.py \
+  tests/test_responses_api_language_model.py \
+  tests/test_lm_output_processor.py \
+  tests/test_transcription_notifier.py \
+  tests/test_tencent_realtime_asr.py \
+  tests/test_minimax_streaming_tts.py \
+  tests/openai_realtime/test_websocket_router.py
+
+160 passed, 1 deprecation warning
+
+PYTHONPATH=src .venv/bin/ruff check --no-cache \
+  src/speech_to_speech/LLM \
+  src/speech_to_speech/pipeline/messages.py \
+  src/speech_to_speech/pipeline/cancel_scope.py \
+  src/speech_to_speech/STT/tencent_asr_handler.py \
+  src/speech_to_speech/STT/transcription_notifier.py \
+  src/speech_to_speech/TTS/minimax_tts_handler.py \
+  tests/test_provider_streaming_pipeline.py \
+  tests/test_transcription_notifier.py \
+  tests/test_tencent_realtime_asr.py
+
+All checks passed!
+
+git diff --check
+
+passed
+```
+
+A repository-wide `pytest` collection attempt aborted in the native ML dependency stack while importing `src/speech_to_speech/LLM/language_model.py`; no tests ran in that attempt. The provider, realtime-router, Tencent, MiniMax, notifier, and shared LLM matrix above completed normally.

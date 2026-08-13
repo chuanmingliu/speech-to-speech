@@ -1,3 +1,7 @@
+from collections.abc import Callable
+from time import monotonic
+
+
 class CancelScope:
     """Unified cancellation signal for the speech-to-speech pipeline.
 
@@ -10,10 +14,12 @@ class CancelScope:
     reads and writes atomic at the bytecode level, so no lock is needed.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, clock: Callable[[], float] = monotonic) -> None:
         self._gen: int = 0
         self._discarding: bool = False
         self._discarded_generation: int | None = None
+        self._clock = clock
+        self._cancelled_at_s: float | None = None
 
     @property
     def generation(self) -> int:
@@ -28,6 +34,7 @@ class CancelScope:
         generation as stale) and enables the send-loop discard guard.
         """
         # prevent overflow... after 4 billion generations, we'll wrap around xD...
+        self._cancelled_at_s = self._clock()
         self._discarded_generation = self._gen
         self._gen = (self._gen + 1) & 0xFFFFFFFF
         self._discarding = True
@@ -42,12 +49,14 @@ class CancelScope:
             return
         self._discarding = False
         self._discarded_generation = None
+        self._cancelled_at_s = None
 
     def new_response(self) -> None:
         """An explicit ``response.create`` starts a new response.
         Clears the discard guard."""
         self._discarding = False
         self._discarded_generation = None
+        self._cancelled_at_s = None
 
     def is_stale(self, gen: int) -> bool:
         """Return True if *gen* has been superseded by a ``cancel`` call."""
@@ -58,7 +67,13 @@ class CancelScope:
         """Whether the send loop should silently drop stale output."""
         return self._discarding
 
+    @property
+    def cancelled_at_s(self) -> float | None:
+        """Monotonic instant of the latest cancellation, for internal metrics."""
+        return self._cancelled_at_s
+
     def reset(self) -> None:
         """Clear discard state (e.g. on new session connect)."""
         self._discarding = False
         self._discarded_generation = None
+        self._cancelled_at_s = None

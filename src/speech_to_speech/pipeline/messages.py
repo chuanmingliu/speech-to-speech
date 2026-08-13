@@ -89,6 +89,7 @@ class LLMResponseChunk(PipelineMessage):
     speech_stopped_at_s: float | None = None
     cancel_generation: int | None = None
     first_delta_at_s: float | None = None
+    speakable_phrase_at_s: float | None = None
 
 
 class TokenUsage(PipelineMessage):
@@ -132,6 +133,7 @@ class TTSInput(PipelineMessage):
     turn_revision: int | None = None
     speech_stopped_at_s: float | None = None
     cancel_generation: int | None = None
+    speakable_phrase_at_s: float | None = None
 
 
 class AudioOutput(PipelineMessage):

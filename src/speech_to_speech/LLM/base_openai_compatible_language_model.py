@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from time import monotonic
 from typing import Any, Callable, Optional
 from urllib.parse import urlsplit
@@ -83,6 +83,25 @@ class Usage(BaseModel):
 
 
 ProviderEvent = TextDelta | AssistantMessage | ToolCall | Usage
+
+
+class _ProviderStreamCloser:
+    """Serialize an idempotent provider close across cancellation and cleanup."""
+
+    def __init__(self, stream: Any) -> None:
+        self._stream = stream
+        self._lock = Lock()
+        self._closed = False
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            try:
+                self._stream.close()
+            except Exception:
+                return
+            self._closed = True
 
 
 class _Turn(BaseModel):
@@ -304,6 +323,7 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
         text: str = "",
         tools: list[ResponseFunctionToolCall] | None = None,
         language_code: Optional[str] = None,
+        speakable_phrase_at_s: float | None = None,
     ) -> LLMResponseChunk:
         return LLMResponseChunk(
             text=text,
@@ -316,6 +336,7 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
             speech_stopped_at_s=turn.speech_stopped_at_s,
             cancel_generation=turn.gen,
             first_delta_at_s=turn.first_delta_at_s,
+            speakable_phrase_at_s=speakable_phrase_at_s,
         )
 
     def _record_tool_call(self, state: _GenState, turn: _Turn, item: ResponseFunctionToolCall) -> Iterator[LLMOut]:
@@ -367,7 +388,11 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
             if not self._turn_output_allowed(turn.turn_id, turn.turn_revision):
                 logger.info("LLM generation cancelled (stale speculative turn)")
                 return
-            yield self._chunk(turn, text=" ".join(batch))
+            yield self._chunk(
+                turn,
+                text=" ".join(batch),
+                speakable_phrase_at_s=self._now(),
+            )
 
         for event in events:
             if self._generation_is_stale(turn.gen) or not self._turn_is_latest(turn.turn_id, turn.turn_revision):
@@ -404,7 +429,7 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
                         log = logger.debug
                     if turn.request_started_at_s is not None:
                         log(
-                            "DeepSeek first delta latency: %.3fs (turn=%s rev=%s)",
+                            "Provider stream first delta latency: %.3fs (turn=%s rev=%s)",
                             turn.first_delta_at_s - turn.request_started_at_s,
                             turn.turn_id,
                             turn.turn_revision,
@@ -446,9 +471,8 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
                 if self._generation_is_stale(turn.gen):
                     logger.info("LLM generation cancelled (interruption)")
                 else:
-                    logger.debug(f"Clean text: {state.clean_text}")
                     yield from _flush(sentence_batch)
-            logger.info(f"Tools: {state.tools}")
+            logger.info("LLM generation completed (tools=%d)", len(state.tools))
 
     def _consume_nonstreaming(self, events: Iterator[ProviderEvent], state: _GenState, turn: _Turn) -> Iterator[LLMOut]:
         if self._generation_is_stale(turn.gen) or not self._turn_is_latest(turn.turn_id, turn.turn_revision):
@@ -476,8 +500,7 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
                     and self._turn_output_allowed(turn.turn_id, turn.turn_revision)
                 ):
                     yield self._chunk(turn, text=out)
-        logger.debug(f"Clean text: {state.clean_text}")
-        logger.info(f"Tools: {state.tools}")
+        logger.info("LLM generation completed (tools=%d)", len(state.tools))
 
     # ── orchestration ─────────────────────────────────────────────────────────
 
@@ -489,6 +512,7 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
         optional_kwargs: dict[str, Any],
     ) -> Iterator[LLMOut]:
         api_response: Any = None
+        stream_closer: _ProviderStreamCloser | None = None
         cancel_watcher_done = Event()
         cancel_watcher: Thread | None = None
         state = _GenState()
@@ -509,24 +533,29 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
                 turn.request_started_at_s = self._now()
                 api_response = self._request(api_input, optional_kwargs)
             if api_response is not None:
+                if callable(getattr(api_response, "close", None)):
+                    stream_closer = _ProviderStreamCloser(api_response)
                 if (
                     self.stream
                     and (turn.gen is not None or self.speculative_turns is not None)
-                    and callable(getattr(api_response, "close", None))
+                    and stream_closer is not None
                 ):
                     def close_on_cancellation() -> None:
                         while not cancel_watcher_done.wait(0.01):
                             if self._generation_is_stale(turn.gen) or not self._turn_is_latest(
                                 turn.turn_id, turn.turn_revision
                             ):
-                                close_started_at_s = self._now()
-                                try:
-                                    api_response.close()
-                                except Exception:
-                                    pass
+                                cancelled_at_s = (
+                                    self.cancel_scope.cancelled_at_s
+                                    if self.cancel_scope is not None
+                                    else None
+                                )
+                                if cancelled_at_s is None:
+                                    cancelled_at_s = self._now()
+                                stream_closer.close()
                                 logger.info(
-                                    "DeepSeek barge-in close latency: %.3fs (turn=%s rev=%s)",
-                                    self._now() - close_started_at_s,
+                                    "Provider stream barge-in close latency: %.3fs (turn=%s rev=%s)",
+                                    self._now() - cancelled_at_s,
                                     turn.turn_id,
                                     turn.turn_revision,
                                 )
@@ -564,18 +593,21 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
             # the error and fall through to the EndOfResponse below. Without this the
             # exception would escape process() and no EndOfResponse would be emitted,
             # leaving st.in_response stuck and locking every subsequent response.
-            logger.exception("LLM generation failed; ending the current response")
-            if error_message is None:
-                error_message = f"Language model generation failed: {exc}"
+            if self._generation_is_stale(turn.gen) or not self._turn_is_latest(turn.turn_id, turn.turn_revision):
+                logger.debug("Provider stream ended during cancellation")
+            else:
+                logger.error(
+                    "LLM generation failed; ending the current response (error_type=%s)",
+                    type(exc).__name__,
+                )
+                if error_message is None:
+                    error_message = f"Language model generation failed: {exc}"
         finally:
             cancel_watcher_done.set()
-            if api_response is not None and hasattr(api_response, "close"):
-                try:
-                    api_response.close()
-                except Exception:
-                    pass
+            if stream_closer is not None:
+                stream_closer.close()
             if cancel_watcher is not None:
-                cancel_watcher.join(timeout=0.1)
+                cancel_watcher.join()
 
         if (
             error_message is None

@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import queue
 import time
 import traceback
@@ -13,7 +14,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 import numpy as np
 import pytest
 
-from speech_to_speech.pipeline.messages import PartialTranscription, Transcription, VADAudio
+from speech_to_speech.pipeline.messages import VADAudio
 from speech_to_speech.STT.tencent_asr_handler import TencentASRHandler
 from speech_to_speech.STT.tencent_realtime_client import (
     TencentRealtimeConfig,
@@ -384,7 +385,12 @@ def test_handler_reuses_one_session_for_progressive_and_final_snapshots():
     partials = list(handler.process(progressive))
 
     assert len(factory.sessions) == 1
-    assert partials == [PartialTranscription(text="你", turn_id="turn-1", turn_revision=0)]
+    assert len(partials) == 1
+    assert partials[0].text == "你"
+    assert partials[0].turn_id == "turn-1"
+    assert partials[0].turn_revision == 0
+    assert partials[0].first_partial_at_s is not None
+    assert math.isfinite(partials[0].first_partial_at_s)
 
     session.results = [TencentRecognitionResult("你好。", final=True, stable=True)]
     final = VADAudio(
@@ -398,15 +404,15 @@ def test_handler_reuses_one_session_for_progressive_and_final_snapshots():
 
     assert len(session.finished) == 1
     np.testing.assert_array_equal(session.finished[0], final.audio)
-    assert transcriptions == [
-        Transcription(
-            text="你好。",
-            language_code="zh",
-            turn_id="turn-1",
-            turn_revision=0,
-            speech_stopped_at_s=123.0,
-        )
-    ]
+    assert len(transcriptions) == 1
+    assert transcriptions[0].text == "你好。"
+    assert transcriptions[0].language_code == "zh"
+    assert transcriptions[0].turn_id == "turn-1"
+    assert transcriptions[0].turn_revision == 0
+    assert transcriptions[0].speech_stopped_at_s == 123.0
+    assert transcriptions[0].final_at_s is not None
+    assert math.isfinite(transcriptions[0].final_at_s)
+    assert transcriptions[0].final_at_s >= partials[0].first_partial_at_s
 
 
 def test_handler_closes_old_turn_and_closes_failed_or_ended_sessions():

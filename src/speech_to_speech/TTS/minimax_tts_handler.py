@@ -449,6 +449,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         self._active_turn: tuple[str | None, int | None] | None = None
         self._request_started_at_s: float | None = None
         self._first_audio_at_s: float | None = None
+        self._last_audio_at_s: float | None = None
         self._pending_first_audio_at_s: float | None = None
         self._phrase_dispatched = False
 
@@ -508,6 +509,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             self._active_turn = turn
             self._request_started_at_s = self._clock()
             self._first_audio_at_s = None
+            self._last_audio_at_s = None
             self._phrase_dispatched = False
             try:
                 client.start(cancelled=self._active_cancelled)
@@ -526,20 +528,21 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             dispatched_at_s = self._clock()
             dispatch_log = logger.debug if self._phrase_dispatched else logger.info
             self._phrase_dispatched = True
-            if self._request_started_at_s is not None:
+            if tts_input.speakable_phrase_at_s is not None:
                 dispatch_log(
-                    "MiniMax phrase dispatch latency: %.3fs (turn=%s rev=%s)",
-                    dispatched_at_s - self._request_started_at_s,
+                    "MiniMax phrase-ready to dispatch latency: %.3fs (turn=%s rev=%s)",
+                    dispatched_at_s - tts_input.speakable_phrase_at_s,
                     tts_input.turn_id,
                     tts_input.turn_revision,
                 )
             for block in client.synthesize(text, cancelled=self._active_cancelled):
                 if self._first_audio_at_s is None:
                     self._first_audio_at_s = self._clock()
+                    self._last_audio_at_s = self._first_audio_at_s
                     self._pending_first_audio_at_s = self._first_audio_at_s
                     if self._request_started_at_s is not None:
                         logger.info(
-                            "MiniMax first audio latency: %.3fs (turn=%s rev=%s)",
+                            "MiniMax request to first audio latency: %.3fs (turn=%s rev=%s)",
                             self._first_audio_at_s - self._request_started_at_s,
                             tts_input.turn_id,
                             tts_input.turn_revision,
@@ -551,6 +554,8 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
                             tts_input.turn_id,
                             tts_input.turn_revision,
                         )
+                else:
+                    self._last_audio_at_s = self._clock()
                 yield block
         except Exception:
             self._close_active_client()
@@ -574,6 +579,14 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
 
     def _close_active_client(self, *, graceful: bool = False) -> None:
         client, self._active_client = self._active_client, None
+        turn = self._active_turn
+        cancelled_at_s = (
+            self.cancel_scope.cancelled_at_s
+            if self._active_generation is not None
+            and self.cancel_scope is not None
+            and self.cancel_scope.is_stale(self._active_generation)
+            else None
+        )
         self._active_generation = None
         self._active_turn = None
         self._request_started_at_s = None
@@ -582,6 +595,21 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         self._phrase_dispatched = False
         if client is not None:
             client.close(graceful=graceful)
+            if cancelled_at_s is not None:
+                logger.info(
+                    "MiniMax barge-in close latency: %.3fs (turn=%s rev=%s)",
+                    self._clock() - cancelled_at_s,
+                    turn[0] if turn else None,
+                    turn[1] if turn else None,
+                )
+                if self._last_audio_at_s is not None:
+                    logger.info(
+                        "MiniMax last accepted audio offset from barge-in: %.3fs (turn=%s rev=%s)",
+                        self._last_audio_at_s - cancelled_at_s,
+                        turn[0] if turn else None,
+                        turn[1] if turn else None,
+                    )
+        self._last_audio_at_s = None
 
     def _close_active_client_for(self, turn: tuple[str | None, int | None]) -> None:
         if self._active_turn == turn:

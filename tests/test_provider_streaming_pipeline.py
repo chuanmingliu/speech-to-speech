@@ -4,6 +4,7 @@ import logging
 import queue
 import sys
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -28,6 +29,7 @@ from speech_to_speech.pipeline.messages import (
 from speech_to_speech.s2s_pipeline import parse_arguments
 from speech_to_speech.STT.tencent_asr_handler import TencentASRHandler
 from speech_to_speech.STT.tencent_realtime_client import TencentRecognitionResult
+from speech_to_speech.STT.transcription_notifier import TranscriptionNotifier
 from speech_to_speech.TTS.minimax_tts_handler import MiniMaxTTSHandler
 
 
@@ -48,12 +50,13 @@ class _FakeClient:
 
 
 class _ControlledStream:
-    def __init__(self, terminal_gate: threading.Event):
+    def __init__(self, terminal_gate: threading.Event, first_text: str = "First sentence. Second"):
         self.terminal_gate = terminal_gate
+        self.first_text = first_text
         self.closed = threading.Event()
 
     def __iter__(self):
-        yield _chat_chunk("First sentence. Second")
+        yield _chat_chunk(self.first_text)
         self.terminal_gate.wait(timeout=1.0)
         yield _chat_chunk(" sentence.")
 
@@ -62,20 +65,38 @@ class _ControlledStream:
 
 
 class _CloseReleasedStream:
-    def __init__(self):
+    def __init__(self, *, raise_after_close: bool = False, close_delay_s: float = 0.0):
         self.first_delta = threading.Event()
         self.blocked = threading.Event()
         self.closed = threading.Event()
+        self.raise_after_close = raise_after_close
+        self.close_delay_s = close_delay_s
+        self.close_calls = 0
+        self.concurrent_closes = 0
+        self.max_concurrent_closes = 0
+        self._close_lock = threading.Lock()
 
     def __iter__(self):
         self.first_delta.set()
         yield _chat_chunk("Leading fragment")
         self.blocked.set()
         self.closed.wait(timeout=1.0)
+        if self.raise_after_close:
+            raise RuntimeError("stream closed by cancellation")
         yield _chat_chunk(" STALE_PROVIDER_TEXT")
 
     def close(self):
-        self.closed.set()
+        with self._close_lock:
+            self.close_calls += 1
+            self.concurrent_closes += 1
+            self.max_concurrent_closes = max(self.max_concurrent_closes, self.concurrent_closes)
+        try:
+            self.closed.set()
+            if self.close_delay_s:
+                time.sleep(self.close_delay_s)
+        finally:
+            with self._close_lock:
+                self.concurrent_closes -= 1
 
 
 def _chat_chunk(text: str):
@@ -124,6 +145,14 @@ class _Clock:
         return next(self.values)
 
 
+class _ManualClock:
+    def __init__(self, now: float):
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
 def test_first_sentence_reaches_real_tts_boundary_before_provider_terminal(monkeypatch):
     profile = Path(__file__).parents[1] / "configs" / "tencent-deepseek-minimax.json"
     monkeypatch.setattr(sys, "argv", ["speech-to-speech", str(profile)])
@@ -151,14 +180,10 @@ def test_first_sentence_reaches_real_tts_boundary_before_provider_terminal(monke
         assert first.text == "First sentence."
         assert first.turn_id == "turn-1"
         assert first.turn_revision == 2
-        assert list(processor.process(first)) == [
-            TTSInput(
-                text="First sentence.",
-                runtime_config=first.runtime_config,
-                turn_id="turn-1",
-                turn_revision=2,
-            )
-        ]
+        tts_inputs = list(processor.process(first))
+        assert len(tts_inputs) == 1
+        assert tts_inputs[0].text == "First sentence."
+        assert tts_inputs[0].speakable_phrase_at_s == first.speakable_phrase_at_s
         assert terminal_gate.is_set() is False
     finally:
         terminal_gate.set()
@@ -166,9 +191,9 @@ def test_first_sentence_reaches_real_tts_boundary_before_provider_terminal(monke
 
 
 def test_cancel_closes_blocked_deepseek_stream_without_stale_output(caplog):
-    cancel_scope = CancelScope()
-    stream = _CloseReleasedStream()
-    handler = _handler(stream_batch_sentences=1, cancel_scope=cancel_scope, clock=_Clock(1.0, 2.0, 3.0, 3.05))
+    cancel_scope = CancelScope(clock=lambda: 3.0)
+    stream = _CloseReleasedStream(raise_after_close=True, close_delay_s=0.05)
+    handler = _handler(stream_batch_sentences=1, cancel_scope=cancel_scope, clock=_Clock(1.0, 2.0, 3.05))
     handler.client.chat.completions.create = lambda **_kwargs: stream
     outputs: list[object] = []
     completed = threading.Event()
@@ -187,11 +212,16 @@ def test_cancel_closes_blocked_deepseek_stream_without_stale_output(caplog):
             assert stream.closed.wait(timeout=0.2)
             assert completed.wait(timeout=0.2)
         finally:
-            stream.close()
+            if not stream.closed.is_set():
+                stream.close()
             worker.join(timeout=1.0)
 
     assert all("STALE_PROVIDER_TEXT" not in output.text for output in outputs if isinstance(output, LLMResponseChunk))
-    assert "DeepSeek barge-in close latency: 0.050s (turn=turn-1 rev=2)" in caplog.text
+    ends = [output for output in outputs if output.tag == "end_of_response"]
+    assert len(ends) == 1 and ends[0].error is None
+    assert stream.close_calls == 1
+    assert stream.max_concurrent_closes == 1
+    assert "Provider stream barge-in close latency: 0.050s (turn=turn-1 rev=2)" in caplog.text
 
 
 def test_latency_metrics_and_timestamps_are_monotonic_and_content_free(caplog):
@@ -231,8 +261,11 @@ def test_latency_metrics_and_timestamps_are_monotonic_and_content_free(caplog):
             "clock": _Clock(12.0, 23.0),
         },
     )
-    llm = _handler(stream_batch_sentences=1, clock=_Clock(30.0, 31.5))
-    llm.client.chat.completions.create = lambda **_kwargs: _ControlledStream(threading.Event())
+    llm = _handler(stream_batch_sentences=1, clock=_Clock(30.0, 31.5, 32.0))
+    llm.client.chat.completions.create = lambda **_kwargs: _ControlledStream(
+        threading.Event(),
+        first_text=raw_json + ". Second",
+    )
 
     class TTSClient:
         def start(self, *, cancelled):
@@ -240,7 +273,7 @@ def test_latency_metrics_and_timestamps_are_monotonic_and_content_free(caplog):
 
         def synthesize(self, _text, *, cancelled):
             assert cancelled() is False
-            yield np.ones(512, dtype=np.float32)
+            yield np.frombuffer(bytes.fromhex(audio_hex), dtype=np.uint8)
 
         def close(self, *, graceful=False):
             pass
@@ -254,12 +287,24 @@ def test_latency_metrics_and_timestamps_are_monotonic_and_content_free(caplog):
             "api_key": api_key,
             "voice_id": "voice",
             "client_factory": lambda _config: TTSClient(),
-            "clock": _Clock(40.0, 40.1, 40.4),
+            "clock": _Clock(32.1, 32.4, 33.0),
         },
     )
 
     caplog.clear()
-    with caplog.at_level(logging.INFO):
+    notifier = TranscriptionNotifier(
+        threading.Event(),
+        queue.Queue(),
+        queue.Queue(),
+        setup_kwargs={"text_output_queue": queue.Queue()},
+    )
+    processor = LMOutputProcessor(
+        threading.Event(),
+        queue.Queue(),
+        queue.Queue(),
+        setup_kwargs={"text_output_queue": queue.Queue()},
+    )
+    with caplog.at_level(logging.DEBUG):
         partial = list(
             stt.process(
                 VADAudio(
@@ -282,13 +327,17 @@ def test_latency_metrics_and_timestamps_are_monotonic_and_content_free(caplog):
                 )
             )
         )[0]
+        list(notifier.process(partial))
+        list(notifier.process(final))
         llm_chunk = next(llm.process(_request()))
+        list(processor.process(llm_chunk))
         tts_input = TTSInput(
             text=transcript,
             turn_id="turn-1",
             turn_revision=2,
-            speech_stopped_at_s=39.0,
+            speech_stopped_at_s=31.0,
             cancel_generation=7,
+            speakable_phrase_at_s=llm_chunk.speakable_phrase_at_s,
         )
         first_audio = next(tts.process(tts_input))
         queued_audio = tts.output_for_queue(first_audio, tts_input)
@@ -296,13 +345,13 @@ def test_latency_metrics_and_timestamps_are_monotonic_and_content_free(caplog):
     assert isinstance(partial, PartialTranscription) and partial.first_partial_at_s == 12.0
     assert isinstance(final, Transcription) and final.final_at_s == 23.0
     assert isinstance(llm_chunk, LLMResponseChunk) and llm_chunk.first_delta_at_s == 31.5
-    assert isinstance(queued_audio, AudioOutput) and queued_audio.first_audio_at_s == 40.4
+    assert isinstance(queued_audio, AudioOutput) and queued_audio.first_audio_at_s == 33.0
     assert "Tencent first partial latency: 2.000s (turn=turn-1 rev=2)" in caplog.text
     assert "Tencent final latency: 3.000s (turn=turn-1 rev=2)" in caplog.text
-    assert "DeepSeek first delta latency: 1.500s (turn=turn-1 rev=2)" in caplog.text
-    assert "MiniMax phrase dispatch latency: 0.100s (turn=turn-1 rev=2)" in caplog.text
-    assert "MiniMax first audio latency: 0.400s (turn=turn-1 rev=2)" in caplog.text
-    assert "Speech end to first audio latency: 1.400s (turn=turn-1 rev=2)" in caplog.text
+    assert "Provider stream first delta latency: 1.500s (turn=turn-1 rev=2)" in caplog.text
+    assert "MiniMax phrase-ready to dispatch latency: 0.400s (turn=turn-1 rev=2)" in caplog.text
+    assert "MiniMax request to first audio latency: 0.900s (turn=turn-1 rev=2)" in caplog.text
+    assert "Speech end to first audio latency: 2.000s (turn=turn-1 rev=2)" in caplog.text
     forbidden = (transcript, api_key, signature, audio_hex, raw_json, "SENTINEL_RAW_JSON")
     assert all(value not in caplog.text for value in forbidden)
 
@@ -311,4 +360,55 @@ def test_timing_fields_keep_internal_message_construction_backward_compatible():
     assert PartialTranscription(text="partial").first_partial_at_s is None
     assert Transcription(text="final").final_at_s is None
     assert LLMResponseChunk(text="delta").first_delta_at_s is None
+    assert LLMResponseChunk(text="delta").speakable_phrase_at_s is None
+    assert TTSInput(text="phrase").speakable_phrase_at_s is None
     assert AudioOutput(audio=b"pcm").first_audio_at_s is None
+
+
+def test_minimax_barge_in_records_closure_and_last_accepted_audio(caplog):
+    cancel_clock = _ManualClock(10.0)
+    cancel_scope = CancelScope(clock=cancel_clock)
+
+    class Client:
+        def start(self, *, cancelled):
+            assert cancelled() is False
+
+        def synthesize(self, _text, *, cancelled):
+            yield np.ones(512, dtype=np.float32)
+            if cancelled():
+                return
+            yield np.ones(512, dtype=np.float32)
+
+        def close(self, *, graceful=False):
+            pass
+
+    handler = MiniMaxTTSHandler(
+        threading.Event(),
+        queue.Queue(),
+        queue.Queue(),
+        setup_args=(threading.Event(),),
+        setup_kwargs={
+            "api_key": "key",
+            "voice_id": "voice",
+            "cancel_scope": cancel_scope,
+            "client_factory": lambda _config: Client(),
+            "clock": _Clock(10.0, 10.1, 10.2, 12.3),
+        },
+    )
+    generation = handler.process(
+        TTSInput(
+            text="phrase",
+            turn_id="turn-1",
+            turn_revision=2,
+            speakable_phrase_at_s=9.9,
+        )
+    )
+
+    with caplog.at_level(logging.INFO):
+        next(generation)
+        cancel_clock.now = 12.0
+        cancel_scope.cancel()
+        assert list(generation) == []
+
+    assert "MiniMax barge-in close latency: 0.300s (turn=turn-1 rev=2)" in caplog.text
+    assert "MiniMax last accepted audio offset from barge-in: -1.800s (turn=turn-1 rev=2)" in caplog.text

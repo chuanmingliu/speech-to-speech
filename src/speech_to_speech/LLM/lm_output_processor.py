@@ -118,7 +118,7 @@ class LMOutputProcessor(BaseHandler[LLMOut, TTSIn]):
             logger.debug("Dropping stale LLM chunk for turn=%s rev=%s", lm_output.turn_id, lm_output.turn_revision)
             return
 
-        logger.debug(f"LM processor: text='{lm_output.text}', tools={lm_output.tools}")
+        logger.debug("LM processor received chunk (tools=%d)", len(lm_output.tools))
 
         if self.text_output_queue is not None:
             event = AssistantTextEvent(
@@ -129,13 +129,13 @@ class LMOutputProcessor(BaseHandler[LLMOut, TTSIn]):
             )
             if lm_output.tools:
                 event.tools = lm_output.tools
-                logger.info(f"Sending to clients: text='{lm_output.text}', tools={[t.name for t in lm_output.tools]}")
+                logger.info("Sending assistant chunk with %d tool call(s) to clients", len(lm_output.tools))
             else:
-                logger.debug(f"Sending to clients: text='{lm_output.text}' (no tools)")
+                logger.debug("Sending assistant text chunk to clients")
             self.text_output_queue.put(event)
 
         if lm_output.text and response_wants_audio(lm_output.response):
-            logger.debug(f"Forwarding to TTS: '{lm_output.text}'")
+            logger.debug("Forwarding assistant text chunk to TTS")
             yield TTSInput(
                 text=lm_output.text,
                 language_code=lm_output.language_code,
@@ -145,4 +145,5 @@ class LMOutputProcessor(BaseHandler[LLMOut, TTSIn]):
                 turn_revision=lm_output.turn_revision,
                 speech_stopped_at_s=lm_output.speech_stopped_at_s,
                 cancel_generation=lm_output.cancel_generation,
+                speakable_phrase_at_s=lm_output.speakable_phrase_at_s,
             )
