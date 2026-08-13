@@ -15,7 +15,7 @@ from websockets.sync.client import connect
 from speech_to_speech.baseHandler import BaseHandler
 from speech_to_speech.pipeline.cancel_scope import CancelScope
 from speech_to_speech.pipeline.handler_types import TTSIn, TTSOut
-from speech_to_speech.pipeline.messages import AUDIO_RESPONSE_DONE, EndOfResponse
+from speech_to_speech.pipeline.messages import AUDIO_RESPONSE_DONE, AudioOutput, EndOfResponse
 from speech_to_speech.pipeline.speculative_turns import SpeculativeTurnTracker
 from speech_to_speech.TTS.incremental_mp3_decoder import IncrementalMP3Decoder
 
@@ -420,6 +420,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         cancel_scope: CancelScope | None = None,
         speculative_turns: SpeculativeTurnTracker | None = None,
         client_factory: Callable[[MiniMaxTTSConfig], MiniMaxStreamingClient] = MiniMaxStreamingClient,
+        clock: Callable[[], float] = monotonic,
     ) -> None:
         self.should_listen = should_listen
         self.cancel_scope = cancel_scope
@@ -442,9 +443,14 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             event_timeout_s=request_timeout_s,
         )
         self._client_factory = client_factory
+        self._clock = clock
         self._active_client: MiniMaxStreamingClient | None = None
         self._active_generation: int | None = None
         self._active_turn: tuple[str | None, int | None] | None = None
+        self._request_started_at_s: float | None = None
+        self._first_audio_at_s: float | None = None
+        self._pending_first_audio_at_s: float | None = None
+        self._phrase_dispatched = False
 
     def process(self, tts_input: TTSIn) -> Iterator[TTSOut]:
         speculative_turns = self.speculative_turns
@@ -500,6 +506,9 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             self._active_client = client
             self._active_generation = generation
             self._active_turn = turn
+            self._request_started_at_s = self._clock()
+            self._first_audio_at_s = None
+            self._phrase_dispatched = False
             try:
                 client.start(cancelled=self._active_cancelled)
             except Exception:
@@ -514,7 +523,35 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         client = self._active_client
         assert client is not None
         try:
-            yield from client.synthesize(text, cancelled=self._active_cancelled)
+            dispatched_at_s = self._clock()
+            dispatch_log = logger.debug if self._phrase_dispatched else logger.info
+            self._phrase_dispatched = True
+            if self._request_started_at_s is not None:
+                dispatch_log(
+                    "MiniMax phrase dispatch latency: %.3fs (turn=%s rev=%s)",
+                    dispatched_at_s - self._request_started_at_s,
+                    tts_input.turn_id,
+                    tts_input.turn_revision,
+                )
+            for block in client.synthesize(text, cancelled=self._active_cancelled):
+                if self._first_audio_at_s is None:
+                    self._first_audio_at_s = self._clock()
+                    self._pending_first_audio_at_s = self._first_audio_at_s
+                    if self._request_started_at_s is not None:
+                        logger.info(
+                            "MiniMax first audio latency: %.3fs (turn=%s rev=%s)",
+                            self._first_audio_at_s - self._request_started_at_s,
+                            tts_input.turn_id,
+                            tts_input.turn_revision,
+                        )
+                    if tts_input.speech_stopped_at_s is not None:
+                        logger.info(
+                            "Speech end to first audio latency: %.3fs (turn=%s rev=%s)",
+                            self._first_audio_at_s - tts_input.speech_stopped_at_s,
+                            tts_input.turn_id,
+                            tts_input.turn_revision,
+                        )
+                yield block
         except Exception:
             self._close_active_client()
             raise
@@ -528,10 +565,21 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             and self.cancel_scope.is_stale(self._active_generation)
         )
 
+    def output_for_queue(self, output: TTSOut, source_input: TTSIn) -> TTSOut | AudioOutput:
+        queued = super().output_for_queue(output, source_input)
+        if isinstance(queued, AudioOutput) and self._pending_first_audio_at_s is not None:
+            queued.first_audio_at_s = self._pending_first_audio_at_s
+            self._pending_first_audio_at_s = None
+        return queued
+
     def _close_active_client(self, *, graceful: bool = False) -> None:
         client, self._active_client = self._active_client, None
         self._active_generation = None
         self._active_turn = None
+        self._request_started_at_s = None
+        self._first_audio_at_s = None
+        self._pending_first_audio_at_s = None
+        self._phrase_dispatched = False
         if client is not None:
             client.close(graceful=graceful)
 

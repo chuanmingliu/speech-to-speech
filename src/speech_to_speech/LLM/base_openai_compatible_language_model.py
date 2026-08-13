@@ -3,7 +3,9 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
-from typing import Any, Optional
+from threading import Event, Thread
+from time import monotonic
+from typing import Any, Callable, Optional
 from urllib.parse import urlsplit
 
 import httpx
@@ -96,6 +98,8 @@ class _Turn(BaseModel):
     turn_revision: int | None
     speech_stopped_at_s: float | None
     wants_audio: bool
+    request_started_at_s: float | None = None
+    first_delta_at_s: float | None = None
 
 
 class _GenState(BaseModel):
@@ -141,6 +145,7 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
         stream_batch_sentences: int = 3,
         enable_lang_prompt: bool = False,
         compact_history: bool = False,
+        clock: Callable[[], float] = monotonic,
         **_kwargs: Any,
     ) -> None:
         self.cancel_scope = cancel_scope
@@ -151,6 +156,7 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
         self.enable_lang_prompt = enable_lang_prompt
         self.gen_kwargs = dict(gen_kwargs)
         self.request_timeout_s = float(request_timeout_s)
+        self._clock = clock
         self.request_timeout = httpx.Timeout(
             self.request_timeout_s,
             connect=min(10.0, self.request_timeout_s),
@@ -275,6 +281,9 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
             return True
         return self.speculative_turns.is_latest_after_reopen_grace(turn_id, turn_revision)
 
+    def _now(self) -> float:
+        return getattr(self, "_clock", monotonic)()
+
     def _apply_config(
         self,
         chat: Chat,
@@ -306,6 +315,7 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
             turn_revision=turn.turn_revision,
             speech_stopped_at_s=turn.speech_stopped_at_s,
             cancel_generation=turn.gen,
+            first_delta_at_s=turn.first_delta_at_s,
         )
 
     def _record_tool_call(self, state: _GenState, turn: _Turn, item: ResponseFunctionToolCall) -> Iterator[LLMOut]:
@@ -386,6 +396,19 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
                     sentence_batch = []
                 yield from self._record_tool_call(state, turn, event.item)
             elif isinstance(event, TextDelta):
+                if event.text:
+                    if turn.first_delta_at_s is None:
+                        turn.first_delta_at_s = self._now()
+                        log = logger.info
+                    else:
+                        log = logger.debug
+                    if turn.request_started_at_s is not None:
+                        log(
+                            "DeepSeek first delta latency: %.3fs (turn=%s rev=%s)",
+                            turn.first_delta_at_s - turn.request_started_at_s,
+                            turn.turn_id,
+                            turn.turn_revision,
+                        )
                 if not turn.wants_audio:
                     # Text-only: forward verbatim. Keep every character (no
                     # remove_unspeechable, which strips TTS-unfriendly symbols) and
@@ -466,6 +489,8 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
         optional_kwargs: dict[str, Any],
     ) -> Iterator[LLMOut]:
         api_response: Any = None
+        cancel_watcher_done = Event()
+        cancel_watcher: Thread | None = None
         state = _GenState()
         error_message: str | None = None
         api_input = self._serialize(active_chat)
@@ -481,8 +506,38 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
 
         try:
             if error_message is None:
+                turn.request_started_at_s = self._now()
                 api_response = self._request(api_input, optional_kwargs)
             if api_response is not None:
+                if (
+                    self.stream
+                    and (turn.gen is not None or self.speculative_turns is not None)
+                    and callable(getattr(api_response, "close", None))
+                ):
+                    def close_on_cancellation() -> None:
+                        while not cancel_watcher_done.wait(0.01):
+                            if self._generation_is_stale(turn.gen) or not self._turn_is_latest(
+                                turn.turn_id, turn.turn_revision
+                            ):
+                                close_started_at_s = self._now()
+                                try:
+                                    api_response.close()
+                                except Exception:
+                                    pass
+                                logger.info(
+                                    "DeepSeek barge-in close latency: %.3fs (turn=%s rev=%s)",
+                                    self._now() - close_started_at_s,
+                                    turn.turn_id,
+                                    turn.turn_revision,
+                                )
+                                return
+
+                    cancel_watcher = Thread(
+                        target=close_on_cancellation,
+                        name="llm-stream-cancellation",
+                        daemon=True,
+                    )
+                    cancel_watcher.start()
                 events = self._iter_events(api_response)
                 if self.stream:
                     yield from self._consume_streaming(events, state, turn)
@@ -513,11 +568,14 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
             if error_message is None:
                 error_message = f"Language model generation failed: {exc}"
         finally:
+            cancel_watcher_done.set()
             if api_response is not None and hasattr(api_response, "close"):
                 try:
                     api_response.close()
                 except Exception:
                     pass
+            if cancel_watcher is not None:
+                cancel_watcher.join(timeout=0.1)
 
         if (
             error_message is None

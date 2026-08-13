@@ -57,6 +57,7 @@ class PartialTranscription(PipelineMessage):
     text: str
     turn_id: str | None = None
     turn_revision: int | None = None
+    first_partial_at_s: float | None = None
 
 
 class Transcription(PipelineMessage):
@@ -68,6 +69,7 @@ class Transcription(PipelineMessage):
     turn_id: str | None = None
     turn_revision: int | None = None
     speech_stopped_at_s: float | None = None
+    final_at_s: float | None = None
 
 
 # ── LLM → LMOutputProcessor ──────────────────────────────────────────
@@ -86,6 +88,7 @@ class LLMResponseChunk(PipelineMessage):
     turn_revision: int | None = None
     speech_stopped_at_s: float | None = None
     cancel_generation: int | None = None
+    first_delta_at_s: float | None = None
 
 
 class TokenUsage(PipelineMessage):
@@ -137,6 +140,7 @@ class AudioOutput(PipelineMessage):
     tag: Literal["audio_output"] = "audio_output"
     audio: bytes | np.ndarray
     cancel_generation: int | None = None
+    first_audio_at_s: float | None = None
 
 
 # ── Realtime service → LLM ────────────────────────────────────────────

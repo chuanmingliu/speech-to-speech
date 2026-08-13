@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Callable, Iterator
+from time import monotonic
 
 from speech_to_speech.pipeline.handler_types import STTIn, STTOut
 from speech_to_speech.pipeline.messages import PartialTranscription, Transcription
@@ -11,6 +13,8 @@ from speech_to_speech.STT.tencent_realtime_client import (
     TencentRealtimeSession,
     TencentRecognitionResult,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class TencentASRHandler(BaseSTTHandler):
@@ -25,6 +29,7 @@ class TencentASRHandler(BaseSTTHandler):
         language_code: str | None = None,
         endpoint: str = "asr.cloud.tencent.com",
         session_factory: Callable[[TencentRealtimeConfig], TencentRealtimeSession] = TencentRealtimeSession,
+        clock: Callable[[], float] = monotonic,
     ) -> None:
         self.language_code = language_code or os.getenv("TENCENT_ASR_LANGUAGE", "zh")
         self._config = TencentRealtimeConfig(
@@ -35,12 +40,16 @@ class TencentASRHandler(BaseSTTHandler):
             endpoint=endpoint,
         )
         self._session_factory = session_factory
+        self._clock = clock
         self._active_key: tuple[str | None, int | None] | None = None
         self._active_session: TencentRealtimeSession | None = None
+        self._speech_started_at_s: float | None = None
+        self._first_partial_at_s: float | None = None
+        self._final_at_s: float | None = None
 
     def process(self, vad_audio: STTIn) -> Iterator[STTOut]:
         key = (vad_audio.turn_id, vad_audio.turn_revision)
-        session = self._session_for(key)
+        session = self._session_for(key, vad_audio.created_at_s)
         try:
             if vad_audio.mode == "progressive":
                 session.push_snapshot(vad_audio.audio)
@@ -56,32 +65,73 @@ class TencentASRHandler(BaseSTTHandler):
             if vad_audio.mode != "progressive":
                 self._close_active()
 
-    def _session_for(self, key: tuple[str | None, int | None]) -> TencentRealtimeSession:
+    def _session_for(
+        self,
+        key: tuple[str | None, int | None],
+        speech_started_at_s: float,
+    ) -> TencentRealtimeSession:
         if self._active_session is not None and self._active_key != key:
             self._close_active()
         if self._active_session is None:
             self._active_session = self._session_factory(self._config)
             self._active_key = key
+            self._speech_started_at_s = speech_started_at_s
+            self._first_partial_at_s = None
+            self._final_at_s = None
         return self._active_session
 
     def _message_for(self, result: TencentRecognitionResult, vad_audio: STTIn) -> STTOut:
         if result.final:
+            if self._final_at_s is None:
+                self._final_at_s = self._clock()
+                logger.info(
+                    "Tencent final latency: %.3fs (turn=%s rev=%s)",
+                    self._final_at_s - vad_audio.created_at_s,
+                    vad_audio.turn_id,
+                    vad_audio.turn_revision,
+                )
+            else:
+                logger.debug(
+                    "Tencent final latency: %.3fs (turn=%s rev=%s)",
+                    self._final_at_s - vad_audio.created_at_s,
+                    vad_audio.turn_id,
+                    vad_audio.turn_revision,
+                )
             return Transcription(
                 text=result.text.strip(),
                 language_code=self.language_code,
                 turn_id=vad_audio.turn_id,
                 turn_revision=vad_audio.turn_revision,
                 speech_stopped_at_s=vad_audio.created_at_s,
+                final_at_s=self._final_at_s,
             )
+        if self._first_partial_at_s is None:
+            self._first_partial_at_s = self._clock()
+            log = logger.info
+        else:
+            log = logger.debug
+        speech_started_at_s = (
+            self._speech_started_at_s if self._speech_started_at_s is not None else vad_audio.created_at_s
+        )
+        log(
+            "Tencent first partial latency: %.3fs (turn=%s rev=%s)",
+            self._first_partial_at_s - speech_started_at_s,
+            vad_audio.turn_id,
+            vad_audio.turn_revision,
+        )
         return PartialTranscription(
             text=result.text,
             turn_id=vad_audio.turn_id,
             turn_revision=vad_audio.turn_revision,
+            first_partial_at_s=self._first_partial_at_s,
         )
 
     def _close_active(self) -> None:
         session, self._active_session = self._active_session, None
         self._active_key = None
+        self._speech_started_at_s = None
+        self._first_partial_at_s = None
+        self._final_at_s = None
         if session is not None:
             session.close()
 
