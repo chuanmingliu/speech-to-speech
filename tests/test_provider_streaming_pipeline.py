@@ -126,6 +126,19 @@ class _StallingCloseStream(_CloseReleasedStream):
                 self.concurrent_closes -= 1
 
 
+class _CloseIgnoringReadStream(_CloseReleasedStream):
+    def __init__(self):
+        super().__init__()
+        self.release_read = threading.Event()
+
+    def __iter__(self):
+        self.first_delta.set()
+        yield _chat_chunk("Leading fragment")
+        self.blocked.set()
+        self.release_read.wait(timeout=1.0)
+        yield _chat_chunk(" STALE_PROVIDER_TEXT")
+
+
 def _chat_chunk(text: str):
     delta = SimpleNamespace(content=text, refusal=None, tool_calls=None)
     return SimpleNamespace(choices=[SimpleNamespace(delta=delta)], usage=None)
@@ -280,6 +293,71 @@ def test_cancel_abandons_stalled_deepseek_close_without_locking_cleanup():
         worker.join(timeout=0.3)
 
     assert all("STALE_PROVIDER_TEXT" not in output.text for output in outputs if isinstance(output, LLMResponseChunk))
+
+
+def test_cancel_abandons_provider_read_that_ignores_close():
+    cancel_scope = CancelScope()
+    stream = _CloseIgnoringReadStream()
+    handler = _handler(cancel_scope=cancel_scope)
+    handler.client.chat.completions.create = lambda **_kwargs: stream
+    completed = threading.Event()
+    outputs: list[object] = []
+
+    worker = threading.Thread(
+        target=lambda: (outputs.extend(handler.process(_request())), completed.set()),
+        daemon=True,
+    )
+    worker.start()
+    assert stream.first_delta.wait(timeout=0.2)
+    assert stream.blocked.wait(timeout=0.2)
+
+    started = time.monotonic()
+    try:
+        cancel_scope.cancel()
+        assert stream.closed.wait(timeout=0.1)
+        assert completed.wait(timeout=0.15)
+        assert time.monotonic() - started < 0.15
+    finally:
+        stream.release_read.set()
+        worker.join(timeout=0.3)
+
+    assert worker.is_alive() is False
+    assert all("STALE_PROVIDER_TEXT" not in output.text for output in outputs if isinstance(output, LLMResponseChunk))
+
+
+def test_cancel_abandons_blocked_provider_request_before_stream_exists():
+    cancel_scope = CancelScope()
+    handler = _handler(cancel_scope=cancel_scope)
+    request_started = threading.Event()
+    release_request = threading.Event()
+    completed = threading.Event()
+    outputs: list[object] = []
+
+    def blocked_request(_api_input, _optional_kwargs):
+        request_started.set()
+        release_request.wait(timeout=1.0)
+        return _CloseReleasedStream()
+
+    handler._request = blocked_request
+    worker = threading.Thread(
+        target=lambda: (outputs.extend(handler.process(_request())), completed.set()),
+        daemon=True,
+    )
+    worker.start()
+    assert request_started.wait(timeout=0.2)
+
+    started = time.monotonic()
+    try:
+        cancel_scope.cancel()
+        assert completed.wait(timeout=0.15)
+        assert time.monotonic() - started < 0.15
+    finally:
+        release_request.set()
+        worker.join(timeout=0.3)
+
+    assert worker.is_alive() is False
+    assert [output for output in outputs if isinstance(output, LLMResponseChunk)] == []
+    assert len([output for output in outputs if output.tag == "end_of_response"]) == 1
 
 
 def test_deepseek_provider_close_deadline_must_be_finite_and_positive():
