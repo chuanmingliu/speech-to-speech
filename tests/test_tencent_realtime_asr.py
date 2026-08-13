@@ -1,0 +1,384 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import queue
+import time
+from urllib.parse import parse_qs, quote, urlsplit
+
+import numpy as np
+import pytest
+
+from speech_to_speech.pipeline.messages import PartialTranscription, Transcription, VADAudio
+from speech_to_speech.STT.tencent_asr_handler import TencentASRHandler
+from speech_to_speech.STT.tencent_realtime_client import (
+    TencentRealtimeConfig,
+    TencentRealtimeSession,
+    TencentRecognitionResult,
+    build_tencent_realtime_url,
+)
+
+
+class FakeWebSocket:
+    def __init__(self):
+        self.binary_messages: list[bytes] = []
+        self.text_messages: list[str] = []
+        self.incoming: queue.Queue[object] = queue.Queue()
+        self.closed = False
+
+    def send(self, message, timeout=None):
+        if isinstance(message, bytes):
+            self.binary_messages.append(message)
+        else:
+            self.text_messages.append(message)
+
+    def recv(self, timeout=None):
+        message = self.incoming.get(timeout=timeout)
+        if isinstance(message, BaseException):
+            raise message
+        return message
+
+    def close(self):
+        self.closed = True
+        self.incoming.put(EOFError("closed"))
+
+    def provider_event(self, payload):
+        self.incoming.put(json.dumps(payload, ensure_ascii=False))
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 10.0
+        self.sleeps: list[float] = []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, duration):
+        self.sleeps.append(duration)
+        self.now += duration
+
+
+def wait_until(predicate, timeout=1.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.001)
+    raise AssertionError("condition was not reached")
+
+
+def wait_for_results(session, timeout=1.0):
+    observed = []
+
+    def drain_one():
+        observed.extend(session.drain_results())
+        return bool(observed)
+
+    wait_until(drain_one, timeout)
+    return observed
+
+
+def realtime_config(**overrides):
+    values = {
+        "app_id": "1250000000",
+        "secret_id": "sid",
+        "secret_key": "sentinel-secret",
+        "read_timeout_s": 0.01,
+        "final_timeout_s": 1.0,
+    }
+    values.update(overrides)
+    return TencentRealtimeConfig(**values)
+
+
+def provider_result(voice_id, text, *, slice_type, index=0, final=0):
+    return {
+        "code": 0,
+        "message": "success",
+        "voice_id": voice_id,
+        "final": final,
+        "result": {
+            "slice_type": slice_type,
+            "index": index,
+            "voice_text_str": text,
+        },
+    }
+
+
+class FakeRealtimeSession:
+    def __init__(self):
+        self.snapshots: list[np.ndarray] = []
+        self.finished: list[np.ndarray] = []
+        self.results: list[TencentRecognitionResult] = []
+        self.closed = False
+        self.push_error: Exception | None = None
+
+    def push_snapshot(self, audio):
+        if self.push_error:
+            raise self.push_error
+        self.snapshots.append(np.asarray(audio).copy())
+
+    def finish(self, audio):
+        self.finished.append(np.asarray(audio).copy())
+
+    def drain_results(self):
+        drained, self.results = self.results, []
+        return drained
+
+    def close(self):
+        self.closed = True
+
+
+class FakeSessionFactory:
+    def __init__(self):
+        self.configs: list[TencentRealtimeConfig] = []
+        self.sessions: list[FakeRealtimeSession] = []
+
+    def __call__(self, config):
+        self.configs.append(config)
+        session = FakeRealtimeSession()
+        self.sessions.append(session)
+        return session
+
+
+def make_handler(factory, **setup_overrides):
+    from queue import Queue
+    from threading import Event
+
+    setup = {
+        "app_id": "1250000000",
+        "secret_id": "sid",
+        "secret_key": "sentinel-secret",
+        "session_factory": factory,
+    }
+    setup.update(setup_overrides)
+    return TencentASRHandler(Event(), queue_in=Queue(), queue_out=Queue(), setup_kwargs=setup)
+
+
+def test_tencent_url_signing_uses_the_exact_canonical_query_without_exposing_secret(caplog):
+    config = TencentRealtimeConfig(
+        app_id="1250000000",
+        secret_id="sid",
+        secret_key="sentinel-secret",
+    )
+
+    url = build_tencent_realtime_url(config, voice_id="voice-1", now_s=1000, nonce=7)
+
+    canonical_query = (
+        "engine_model_type=16k_zh&expired=4600&filter_empty_result=1&needvad=1&nonce=7"
+        "&secretid=sid&timestamp=1000&voice_format=1&voice_id=voice-1"
+    )
+    signing_payload = f"asr.cloud.tencent.com/asr/v2/1250000000?{canonical_query}"
+    expected_signature = base64.b64encode(
+        hmac.new(b"sentinel-secret", signing_payload.encode(), hashlib.sha1).digest()
+    ).decode()
+    parsed = urlsplit(url)
+    query = parse_qs(parsed.query)
+    assert parsed.scheme == "wss"
+    assert parsed.netloc == "asr.cloud.tencent.com"
+    assert query["voice_format"] == ["1"]
+    assert query["signature"] == [expected_signature]
+    assert f"signature={quote(expected_signature, safe='')}" in url
+    assert "sentinel-secret" not in url + repr(config) + caplog.text
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"app_id": ""}, "app_id"),
+        ({"secret_id": ""}, "secret_id"),
+        ({"secret_key": ""}, "secret_key"),
+        ({"engine": ""}, "engine"),
+        ({"endpoint": "https://example.com/path"}, "endpoint"),
+        ({"connect_timeout_s": 0}, "connect_timeout_s"),
+        ({"read_timeout_s": 0}, "read_timeout_s"),
+        ({"write_timeout_s": 0}, "write_timeout_s"),
+        ({"final_timeout_s": 0}, "final_timeout_s"),
+        ({"close_timeout_s": 0}, "close_timeout_s"),
+        ({"max_frame_bytes": 1}, "max_frame_bytes"),
+        ({"max_frame_bytes": 6401}, "max_frame_bytes"),
+        ({"max_json_bytes": 1024 * 1024 + 1}, "max_json_bytes"),
+    ],
+)
+def test_tencent_config_rejects_unbounded_or_missing_connection_values_without_leaking_secret(
+    overrides, message
+):
+    values = {
+        "app_id": "1250000000",
+        "secret_id": "sid",
+        "secret_key": "sentinel-secret",
+    }
+    values.update(overrides)
+
+    with pytest.raises(ValueError, match=message) as raised:
+        TencentRealtimeConfig(**values)
+
+    assert "sentinel-secret" not in str(raised.value)
+
+
+def test_session_sends_only_each_snapshot_suffix_in_paced_bounded_frames():
+    websocket = FakeWebSocket()
+    clock = FakeClock()
+    session = TencentRealtimeSession(
+        realtime_config(),
+        voice_id="voice-stream",
+        connect_fn=lambda *_args, **_kwargs: websocket,
+        clock=clock,
+        sleep=clock.sleep,
+    )
+    audio = np.linspace(-1.0, 1.0, 8000, dtype=np.float32)
+
+    session.push_snapshot(audio[:3200])
+    session.push_snapshot(audio[:6400])
+    session.push_snapshot(audio)
+    websocket.provider_event(provider_result("voice-stream", "你好", slice_type=2, final=1))
+    session.finish(audio)
+
+    expected_pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype("<i2").tobytes()
+    assert b"".join(websocket.binary_messages) == expected_pcm
+    assert all(len(frame) <= 6400 for frame in websocket.binary_messages)
+    assert clock.sleeps == pytest.approx([0.2, 0.2])
+    assert websocket.text_messages[-1] == '{"type":"end"}'
+    session.close()
+
+
+def test_partial_is_observable_before_finish_and_stable_text_becomes_the_only_final_result():
+    websocket = FakeWebSocket()
+    session = TencentRealtimeSession(
+        realtime_config(),
+        voice_id="voice-results",
+        connect_fn=lambda *_args, **_kwargs: websocket,
+    )
+
+    websocket.provider_event(provider_result("voice-results", "你好", slice_type=1))
+    assert wait_for_results(session) == [TencentRecognitionResult("你好", final=False, stable=False)]
+
+    websocket.provider_event(provider_result("voice-results", "你好。", slice_type=2))
+    websocket.provider_event(
+        {
+            "code": 0,
+            "message": "success",
+            "voice_id": "voice-results",
+            "final": 1,
+        }
+    )
+    session.finish(np.zeros(0, dtype=np.float32))
+
+    assert session.drain_results() == [TencentRecognitionResult("你好。", final=True, stable=True)]
+    session.close()
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        b"binary-is-invalid",
+        "{not-json",
+        json.dumps({"code": 1001, "message": "sentinel-secret provider detail"}),
+        json.dumps({"code": 0, "voice_id": "wrong-voice", "final": 1}),
+    ],
+)
+def test_session_rejects_invalid_provider_events_without_leaking_payload(event):
+    websocket = FakeWebSocket()
+    session = TencentRealtimeSession(
+        realtime_config(),
+        voice_id="voice-errors",
+        connect_fn=lambda *_args, **_kwargs: websocket,
+    )
+    websocket.incoming.put(event)
+
+    with pytest.raises(RuntimeError) as raised:
+        session.finish(np.zeros(0, dtype=np.float32))
+
+    assert "sentinel-secret" not in str(raised.value)
+    session.close()
+
+
+def test_handler_reuses_one_session_for_progressive_and_final_snapshots():
+    factory = FakeSessionFactory()
+    handler = make_handler(factory)
+    first = VADAudio(
+        audio=np.zeros(3200, dtype=np.float32),
+        mode="progressive",
+        turn_id="turn-1",
+        turn_revision=0,
+    )
+
+    assert list(handler.process(first)) == []
+    session = factory.sessions[0]
+    session.results = [TencentRecognitionResult("你", final=False, stable=False)]
+    progressive = VADAudio(
+        audio=np.zeros(6400, dtype=np.float32),
+        mode="progressive",
+        turn_id="turn-1",
+        turn_revision=0,
+    )
+    partials = list(handler.process(progressive))
+
+    assert len(factory.sessions) == 1
+    assert partials == [PartialTranscription(text="你", turn_id="turn-1", turn_revision=0)]
+
+    session.results = [TencentRecognitionResult("你好。", final=True, stable=True)]
+    final = VADAudio(
+        audio=np.zeros(8000, dtype=np.float32),
+        mode="final",
+        turn_id="turn-1",
+        turn_revision=0,
+        created_at_s=123.0,
+    )
+    transcriptions = list(handler.process(final))
+
+    assert len(session.finished) == 1
+    np.testing.assert_array_equal(session.finished[0], final.audio)
+    assert transcriptions == [
+        Transcription(
+            text="你好。",
+            language_code="zh",
+            turn_id="turn-1",
+            turn_revision=0,
+            speech_stopped_at_s=123.0,
+        )
+    ]
+
+
+def test_handler_closes_old_turn_and_closes_failed_or_ended_sessions():
+    factory = FakeSessionFactory()
+    handler = make_handler(factory)
+    turn_1 = VADAudio(audio=np.zeros(1), mode="progressive", turn_id="turn", turn_revision=0)
+    turn_2 = VADAudio(audio=np.zeros(1), mode="progressive", turn_id="turn", turn_revision=1)
+
+    list(handler.process(turn_1))
+    first = factory.sessions[0]
+    list(handler.process(turn_2))
+    second = factory.sessions[1]
+    assert first.closed is True
+
+    second.push_error = RuntimeError("provider unavailable")
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        list(handler.process(turn_2))
+    assert second.closed is True
+
+    list(handler.process(turn_2))
+    third = factory.sessions[2]
+    handler.on_session_end()
+    assert third.closed is True
+
+
+def test_handler_requires_app_id_from_environment_without_logging_it(monkeypatch, caplog):
+    factory = FakeSessionFactory()
+    monkeypatch.setenv("TENCENT_ASR_APP_ID", "sentinel-app-id")
+    monkeypatch.setenv("TENCENT_ASR_SECRET_ID", "sid")
+    monkeypatch.setenv("TENCENT_ASR_SECRET_KEY", "sentinel-secret")
+
+    handler = make_handler(
+        factory,
+        app_id=None,
+        secret_id=None,
+        secret_key=None,
+    )
+    list(handler.process(VADAudio(audio=np.zeros(1), mode="progressive")))
+
+    assert factory.configs[0].app_id == "sentinel-app-id"
+    assert "sentinel-app-id" not in caplog.text
+    assert "sentinel-secret" not in caplog.text + repr(factory.configs[0])

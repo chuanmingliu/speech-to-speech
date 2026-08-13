@@ -1,4 +1,3 @@
-import base64
 import io
 import sys
 import wave
@@ -22,20 +21,10 @@ from speech_to_speech.arguments_classes.pocket_tts_arguments import PocketTTSHan
 from speech_to_speech.arguments_classes.qwen3_tts_arguments import Qwen3TTSHandlerArguments
 from speech_to_speech.arguments_classes.whisper_stt_arguments import WhisperSTTHandlerArguments
 from speech_to_speech.pipeline.cancel_scope import CancelScope
-from speech_to_speech.pipeline.messages import AUDIO_RESPONSE_DONE, EndOfResponse, Transcription, TTSInput, VADAudio
+from speech_to_speech.pipeline.messages import AUDIO_RESPONSE_DONE, EndOfResponse, TTSInput
 from speech_to_speech.s2s_pipeline import get_stt_handler, get_tts_handler, parse_arguments
 from speech_to_speech.STT.tencent_asr_handler import TencentASRHandler
 from speech_to_speech.TTS.minimax_tts_handler import MiniMaxTTSHandler
-
-
-class FakeTencentClient:
-    def __init__(self, text="识别成功。"):
-        self.text = text
-        self.requests = []
-
-    def SentenceRecognition(self, request):
-        self.requests.append(request)
-        return SimpleNamespace(Result=self.text)
 
 
 class FakeHTTPResponse:
@@ -86,19 +75,6 @@ def _minimax_response(samples):
     )
 
 
-def _tencent_handler(client):
-    return TencentASRHandler(
-        Event(),
-        queue_in=Queue(),
-        queue_out=Queue(),
-        setup_kwargs={
-            "client": client,
-            "engine": "16k_zh",
-            "language_code": "zh",
-        },
-    )
-
-
 def _minimax_handler(client, cancel_scope=None):
     return MiniMaxTTSHandler(
         Event(),
@@ -112,67 +88,6 @@ def _minimax_handler(client, cancel_scope=None):
             "cancel_scope": cancel_scope,
         },
     )
-
-
-def test_tencent_asr_converts_float_audio_and_preserves_turn_metadata(monkeypatch):
-    client = FakeTencentClient()
-    handler = _tencent_handler(client)
-    monkeypatch.setattr("speech_to_speech.STT.tencent_asr_handler.console.print", lambda *args, **kwargs: None)
-    audio = np.array([-1.0, -0.5, 0.0, 0.5, 1.0], dtype=np.float32)
-    input_message = VADAudio(
-        audio=audio,
-        mode="final",
-        turn_id="turn-1",
-        turn_revision=2,
-    )
-
-    result = list(handler.process(input_message))
-
-    assert len(result) == 1
-    assert isinstance(result[0], Transcription)
-    assert result[0].text == "识别成功。"
-    assert result[0].language_code == "zh"
-    assert result[0].turn_id == "turn-1"
-    assert result[0].turn_revision == 2
-    assert result[0].speech_stopped_at_s == input_message.created_at_s
-
-    request = client.requests[0]
-    assert request["EngSerViceType"] == "16k_zh"
-    assert request["SourceType"] == 1
-    assert request["VoiceFormat"] == "pcm"
-    assert request["DataLen"] == len(audio) * 2
-    assert base64.b64decode(request["Data"]) == (np.clip(audio, -1.0, 1.0) * 32767).astype("<i2").tobytes()
-
-
-def test_tencent_asr_ignores_progressive_audio():
-    client = FakeTencentClient()
-    handler = _tencent_handler(client)
-
-    result = list(
-        handler.process(
-            VADAudio(
-                audio=np.zeros(16000, dtype=np.float32),
-                mode="progressive",
-            )
-        )
-    )
-
-    assert result == []
-    assert client.requests == []
-
-
-def test_tencent_asr_rejects_audio_over_sentence_limit():
-    handler = _tencent_handler(FakeTencentClient())
-
-    with pytest.raises(ValueError, match="at most 60 seconds"):
-        list(
-            handler.process(
-                VADAudio(
-                    audio=np.zeros(16000 * 60 + 1, dtype=np.float32),
-                    mode="final",
-                )
-            )
-        )
 
 
 def test_minimax_tts_sends_expected_payload_and_yields_padded_pcm(monkeypatch):
@@ -268,7 +183,8 @@ def test_custom_service_json_profile_selects_all_three_providers():
 
     assert args.module_kwargs.mode == "realtime"
     assert args.module_kwargs.stt == "tencent"
-    assert args.module_kwargs.enable_live_transcription is False
+    assert args.module_kwargs.enable_live_transcription is True
+    assert args.module_kwargs.live_transcription_update_interval == 0.2
     assert args.module_kwargs.llm_backend == "chat-completions"
     assert args.module_kwargs.tts == "minimax"
     assert args.responses_api_language_model_handler_kwargs.model_name == "deepseek-v4-flash"
