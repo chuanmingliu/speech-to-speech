@@ -1,28 +1,243 @@
 from __future__ import annotations
 
-import io
+import json
 import logging
 import os
-import wave
+import ssl
+from dataclasses import dataclass
 from threading import Event
-from typing import Any, Iterator
+from time import monotonic
+from typing import Any, Callable, Iterator
 
-import httpx
 import numpy as np
-from rich.console import Console
+from websockets.sync.client import connect
 
 from speech_to_speech.baseHandler import BaseHandler
 from speech_to_speech.pipeline.cancel_scope import CancelScope
 from speech_to_speech.pipeline.handler_types import TTSIn, TTSOut
 from speech_to_speech.pipeline.messages import AUDIO_RESPONSE_DONE, EndOfResponse
 from speech_to_speech.pipeline.speculative_turns import SpeculativeTurnTracker
+from speech_to_speech.TTS.incremental_mp3_decoder import IncrementalMP3Decoder
 
 logger = logging.getLogger(__name__)
-console = Console()
+
+
+@dataclass(frozen=True)
+class MiniMaxTTSConfig:
+    api_key: str
+    voice_id: str
+    model: str = "speech-2.8-turbo"
+    endpoint: str = "wss://api.minimax.io/ws/v1/t2a_v2"
+    language_boost: str = "auto"
+    sample_rate: int = 16_000
+    channels: int = 1
+    block_samples: int = 512
+    bitrate: int = 128_000
+    open_timeout_s: float = 10.0
+    close_timeout_s: float = 5.0
+    read_poll_timeout_s: float = 0.1
+    event_timeout_s: float = 30.0
+    max_event_bytes: int = 1024 * 1024
+    max_audio_bytes: int = 512 * 1024
+    max_queue: int = 4
+
+
+class _MiniMaxCancelled(Exception):
+    pass
+
+
+class MiniMaxStreamingClient:
+    """One official MiniMax WebSocket T2A task."""
+
+    def __init__(
+        self,
+        config: MiniMaxTTSConfig,
+        *,
+        connect_fn: Callable[..., Any] = connect,
+        decoder_factory: Callable[..., Any] = IncrementalMP3Decoder,
+    ) -> None:
+        if config.endpoint != "wss://api.minimax.io/ws/v1/t2a_v2":
+            raise ValueError("MiniMax streaming endpoint must be the official secure WebSocket endpoint")
+        if not config.api_key or not config.voice_id:
+            raise ValueError("MiniMax API key and voice ID are required")
+        if config.sample_rate != 16_000 or config.channels != 1 or config.block_samples != 512:
+            raise ValueError("MiniMax output must be 16 kHz mono with 512-sample blocks")
+        self.config = config
+        self._connect = connect_fn
+        self._decoder = decoder_factory(
+            sample_rate=config.sample_rate,
+            channels=config.channels,
+            block_samples=config.block_samples,
+        )
+        self._websocket: Any | None = None
+        self._started = False
+        self._finished = False
+        self._closed = False
+
+    def start(self) -> None:
+        if self._closed:
+            raise RuntimeError("MiniMax client is closed")
+        if self._started:
+            return
+        tls = ssl.create_default_context()
+        try:
+            self._websocket = self._connect(
+                self.config.endpoint,
+                ssl=tls,
+                additional_headers={"Authorization": f"Bearer {self.config.api_key}"},
+                proxy=None,
+                compression=None,
+                max_size=self.config.max_event_bytes,
+                max_queue=self.config.max_queue,
+                open_timeout=self.config.open_timeout_s,
+                close_timeout=self.config.close_timeout_s,
+            )
+            self._expect_event("connected_success")
+            self._send(
+                {
+                    "event": "task_start",
+                    "model": self.config.model,
+                    "language_boost": self.config.language_boost,
+                    "voice_setting": {
+                        "voice_id": self.config.voice_id,
+                        "speed": 1.1,
+                        "vol": 1.0,
+                        "pitch": 0,
+                    },
+                    "audio_setting": {
+                        "sample_rate": self.config.sample_rate,
+                        "bitrate": self.config.bitrate,
+                        "format": "mp3",
+                        "channel": self.config.channels,
+                    },
+                }
+            )
+            self._expect_event("task_started")
+            self._started = True
+        except Exception:
+            self.close()
+            raise
+
+    def synthesize(self, text: str, *, cancelled: Callable[[], bool]) -> Iterator[np.ndarray]:
+        if not self._started or self._finished or self._closed:
+            raise RuntimeError("MiniMax task is not active")
+        if cancelled():
+            self.close()
+            return
+        try:
+            self._send({"event": "task_continue", "text": text})
+            while True:
+                event = self._receive_event(cancelled=cancelled)
+                event_name = event.get("event")
+                if event_name is not None:
+                    raise RuntimeError("MiniMax returned an event out of order")
+                data = event.get("data")
+                if data is not None and not isinstance(data, dict):
+                    raise RuntimeError("MiniMax returned malformed audio data")
+                audio_hex = data.get("audio") if data else None
+                if audio_hex is not None:
+                    if not isinstance(audio_hex, str) or len(audio_hex) % 2:
+                        raise RuntimeError("MiniMax returned malformed hex audio")
+                    if len(audio_hex) // 2 > self.config.max_audio_bytes:
+                        raise RuntimeError("MiniMax audio fragment exceeds its bound")
+                    try:
+                        encoded = bytes.fromhex(audio_hex)
+                    except ValueError as exc:
+                        raise RuntimeError("MiniMax returned malformed hex audio") from exc
+                    for block in self._decoder.feed(encoded):
+                        if cancelled():
+                            raise _MiniMaxCancelled
+                        yield block
+                is_final = event.get("is_final")
+                if not isinstance(is_final, bool):
+                    raise RuntimeError("MiniMax response is missing a terminal marker")
+                if is_final:
+                    return
+                if cancelled():
+                    raise _MiniMaxCancelled
+        except _MiniMaxCancelled:
+            self.close()
+            return
+        except Exception:
+            self.close()
+            raise
+
+    def finish(self) -> list[np.ndarray]:
+        if self._closed:
+            return []
+        if not self._started:
+            raise RuntimeError("MiniMax task was not started")
+        if self._finished:
+            return []
+        try:
+            self._send({"event": "task_finish"})
+            self._expect_event("task_finished")
+            blocks = self._decoder.finish()
+            self._finished = True
+            return blocks
+        except Exception:
+            self.close()
+            raise
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._decoder.close()
+        websocket, self._websocket = self._websocket, None
+        if websocket is not None:
+            try:
+                websocket.close()
+            except Exception:
+                pass
+
+    def _send(self, message: dict[str, Any]) -> None:
+        if self._websocket is None:
+            raise RuntimeError("MiniMax WebSocket is not connected")
+        self._websocket.send(json.dumps(message, separators=(",", ":")))
+
+    def _expect_event(self, expected: str) -> dict[str, Any]:
+        event = self._receive_event(cancelled=lambda: False)
+        if event.get("event") != expected:
+            raise RuntimeError("MiniMax returned an event out of order")
+        return event
+
+    def _receive_event(self, *, cancelled: Callable[[], bool]) -> dict[str, Any]:
+        if self._websocket is None:
+            raise RuntimeError("MiniMax WebSocket is not connected")
+        deadline = monotonic() + self.config.event_timeout_s
+        while True:
+            if cancelled():
+                raise _MiniMaxCancelled
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise TimeoutError("MiniMax provider event timed out")
+            try:
+                raw = self._websocket.recv(timeout=min(self.config.read_poll_timeout_s, remaining))
+                break
+            except TimeoutError:
+                continue
+        if not isinstance(raw, str):
+            raise RuntimeError("MiniMax returned a non-text event")
+        if len(raw.encode("utf-8")) > self.config.max_event_bytes:
+            raise RuntimeError("MiniMax provider event exceeds its bound")
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("MiniMax returned malformed JSON") from exc
+        if not isinstance(event, dict):
+            raise RuntimeError("MiniMax returned a non-object event")
+        base_response = event.get("base_resp")
+        if not isinstance(base_response, dict) or not isinstance(base_response.get("status_code"), int):
+            raise RuntimeError("MiniMax event is missing provider status")
+        status_code = base_response["status_code"]
+        if status_code != 0 or event.get("event") == "task_failed":
+            raise RuntimeError(f"MiniMax provider failed with status code {status_code}")
+        return event
 
 
 class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
-    """MiniMax synchronous T2A adapter producing 16 kHz mono PCM16 chunks."""
+    """Own one MiniMax streaming task for each assistant response."""
 
     def setup(
         self,
@@ -37,72 +252,32 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         request_timeout_s: float = 30.0,
         cancel_scope: CancelScope | None = None,
         speculative_turns: SpeculativeTurnTracker | None = None,
-        client: Any | None = None,
+        client_factory: Callable[[MiniMaxTTSConfig], MiniMaxStreamingClient] = MiniMaxStreamingClient,
     ) -> None:
         self.should_listen = should_listen
         self.cancel_scope = cancel_scope
         self.speculative_turns = speculative_turns
-        self.api_key = api_key or os.getenv("MINIMAX_TTS_API_KEY")
-        self.model = model or os.getenv("MINIMAX_TTS_MODEL", "speech-2.8-turbo")
-        self.voice_id = voice_id or os.getenv("MINIMAX_TTS_VOICE_ID")
-        self.endpoint = endpoint or os.getenv(
-            "MINIMAX_TTS_ENDPOINT",
-            "https://api.minimax.io/v1/t2a_v2",
-        )
-        self.language_boost = language_boost or os.getenv("MINIMAX_TTS_LANGUAGE_BOOST", "auto")
-        self.sample_rate = sample_rate
-        self.blocksize = blocksize
-
-        if not self.api_key:
+        resolved_api_key = api_key or os.getenv("MINIMAX_TTS_API_KEY")
+        resolved_voice_id = voice_id or os.getenv("MINIMAX_TTS_VOICE_ID")
+        if not resolved_api_key:
             raise ValueError("MiniMax TTS requires MINIMAX_TTS_API_KEY.")
-        if not self.voice_id:
+        if not resolved_voice_id:
             raise ValueError("MiniMax TTS requires MINIMAX_TTS_VOICE_ID.")
-
-        self.client = client or httpx.Client(timeout=request_timeout_s)
-        self._owns_client = client is None
-
-    def _payload(self, text: str) -> dict[str, Any]:
-        return {
-            "model": self.model,
-            "text": text,
-            "stream": False,
-            "language_boost": self.language_boost,
-            "output_format": "hex",
-            "voice_setting": {
-                "voice_id": self.voice_id,
-                "speed": 1.1,
-                "vol": 1.0,
-                "pitch": 0,
-            },
-            "audio_setting": {
-                "sample_rate": self.sample_rate,
-                "format": "wav",
-                "channel": 1,
-            },
-        }
-
-    def _decode_wav(self, audio_hex: str) -> np.ndarray:
-        try:
-            wav_bytes = bytes.fromhex(audio_hex)
-        except ValueError as exc:
-            raise ValueError("MiniMax returned invalid hex-encoded audio.") from exc
-
-        try:
-            with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
-                channels = wav_file.getnchannels()
-                sample_width = wav_file.getsampwidth()
-                sample_rate = wav_file.getframerate()
-                frames = wav_file.readframes(wav_file.getnframes())
-        except wave.Error as exc:
-            raise ValueError("MiniMax returned an invalid WAV payload.") from exc
-
-        if channels != 1:
-            raise ValueError(f"MiniMax returned {channels} audio channels; expected mono.")
-        if sample_width != 2:
-            raise ValueError(f"MiniMax returned {sample_width * 8}-bit audio; expected signed PCM16.")
-        if sample_rate != self.sample_rate:
-            raise ValueError(f"MiniMax returned {sample_rate} Hz audio; expected {self.sample_rate} Hz.")
-        return np.frombuffer(frames, dtype="<i2")
+        self._config = MiniMaxTTSConfig(
+            api_key=resolved_api_key,
+            voice_id=resolved_voice_id,
+            model=model or os.getenv("MINIMAX_TTS_MODEL", "speech-2.8-turbo"),
+            endpoint=endpoint
+            or os.getenv("MINIMAX_TTS_ENDPOINT", "wss://api.minimax.io/ws/v1/t2a_v2"),
+            language_boost=language_boost or os.getenv("MINIMAX_TTS_LANGUAGE_BOOST", "auto"),
+            sample_rate=sample_rate,
+            block_samples=blocksize,
+            event_timeout_s=request_timeout_s,
+        )
+        self._client_factory = client_factory
+        self._active_client: MiniMaxStreamingClient | None = None
+        self._active_generation: int | None = None
+        self._active_turn: tuple[str | None, int | None] | None = None
 
     def process(self, tts_input: TTSIn) -> Iterator[TTSOut]:
         speculative_turns = self.speculative_turns
@@ -111,7 +286,20 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
                 tts_input.turn_id,
                 tts_input.turn_revision,
             ):
+                self._close_active_client()
                 return
+            client = self._active_client
+            if client is not None:
+                try:
+                    if self._active_cancelled():
+                        self._close_active_client()
+                    else:
+                        for block in client.finish():
+                            yield block
+                        self._close_active_client()
+                except Exception:
+                    self._close_active_client()
+                    raise
             yield AUDIO_RESPONSE_DONE
             return
 
@@ -119,6 +307,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             tts_input.turn_id,
             tts_input.turn_revision,
         ):
+            self._close_active_client()
             logger.debug(
                 "Dropping stale MiniMax TTS input for turn=%s rev=%s",
                 tts_input.turn_id,
@@ -132,40 +321,50 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         text = tts_input.text.strip()
         if not text:
             return
-        console.print(f"[green]ASSISTANT: {text}")
 
-        response = self.client.post(
-            self.endpoint,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json=self._payload(text),
+        turn = (tts_input.turn_id, tts_input.turn_revision)
+        if self._active_client is not None and self._active_turn != turn:
+            self._close_active_client()
+        if self._active_cancelled():
+            self._close_active_client()
+            return
+        if self._active_client is None:
+            client = self._client_factory(self._config)
+            try:
+                client.start()
+            except Exception:
+                client.close()
+                raise
+            self._active_client = client
+            self._active_generation = generation
+            self._active_turn = turn
+
+        client = self._active_client
+        assert client is not None
+        try:
+            yield from client.synthesize(text, cancelled=self._active_cancelled)
+        except Exception:
+            self._close_active_client()
+            raise
+        if self._active_cancelled():
+            self._close_active_client()
+
+    def _active_cancelled(self) -> bool:
+        return (
+            self._active_generation is not None
+            and self.cancel_scope is not None
+            and self.cancel_scope.is_stale(self._active_generation)
         )
-        response.raise_for_status()
-        body = response.json()
-        base_response = body.get("base_resp") or {}
-        status_code = base_response.get("status_code")
-        if status_code != 0:
-            raise RuntimeError(
-                "MiniMax TTS request failed "
-                f"(status_code={status_code!r}): {base_response.get('status_msg', 'unknown error')}"
-            )
 
-        data = body.get("data")
-        if not data or not data.get("audio"):
-            raise RuntimeError("MiniMax TTS response did not contain audio data.")
-        audio = self._decode_wav(data["audio"])
+    def _close_active_client(self) -> None:
+        client, self._active_client = self._active_client, None
+        self._active_generation = None
+        self._active_turn = None
+        if client is not None:
+            client.close()
 
-        for start in range(0, len(audio), self.blocksize):
-            if generation is not None and self.cancel_scope is not None and self.cancel_scope.is_stale(generation):
-                logger.info("MiniMax TTS playback cancelled (interruption)")
-                return
-            chunk = audio[start : start + self.blocksize]
-            if len(chunk) < self.blocksize:
-                chunk = np.pad(chunk, (0, self.blocksize - len(chunk)))
-            yield np.asarray(chunk, dtype=np.int16)
+    def on_session_end(self) -> None:
+        self._close_active_client()
 
     def cleanup(self) -> None:
-        if self._owns_client:
-            self.client.close()
+        self._close_active_client()
