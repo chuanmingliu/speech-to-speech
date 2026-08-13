@@ -5,6 +5,8 @@ import hashlib
 import hmac
 import json
 import logging
+import math
+import numbers
 import queue
 import secrets
 import threading
@@ -35,14 +37,15 @@ class TencentRealtimeConfig:
     close_timeout_s: float = 2.0
     max_frame_bytes: int = 6400
     max_json_bytes: int = 1024 * 1024
+    max_transcript_bytes: int = 64 * 1024
 
     def __post_init__(self) -> None:
         for name in ("app_id", "secret_id", "secret_key", "engine", "endpoint"):
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"Tencent realtime ASR {name} must be a non-empty string.")
-        if "://" in self.endpoint or "/" in self.endpoint:
-            raise ValueError("Tencent realtime ASR endpoint must be a hostname.")
+        if self.endpoint != "asr.cloud.tencent.com":
+            raise ValueError("Tencent realtime ASR endpoint must be the canonical provider hostname.")
         for name in (
             "connect_timeout_s",
             "read_timeout_s",
@@ -50,12 +53,15 @@ class TencentRealtimeConfig:
             "final_timeout_s",
             "close_timeout_s",
         ):
-            if getattr(self, name) <= 0:
-                raise ValueError(f"Tencent realtime ASR {name} must be positive.")
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, numbers.Real) or not math.isfinite(value) or value <= 0:
+                raise ValueError(f"Tencent realtime ASR {name} must be a finite positive number.")
         if not 2 <= self.max_frame_bytes <= 6400 or self.max_frame_bytes % 2:
             raise ValueError("Tencent realtime ASR max_frame_bytes must be an even value between 2 and 6400.")
         if not 0 < self.max_json_bytes <= 1024 * 1024:
             raise ValueError("Tencent realtime ASR max_json_bytes must be between 1 and 1048576.")
+        if not 0 < self.max_transcript_bytes <= 1024 * 1024:
+            raise ValueError("Tencent realtime ASR max_transcript_bytes must be between 1 and 1048576.")
 
 
 @dataclass(frozen=True)
@@ -121,11 +127,14 @@ class TencentRealtimeSession:
         self._writer_done = threading.Event()
         self._closed = False
         self._close_lock = threading.Lock()
+        self._socket_close_lock = threading.Lock()
+        self._socket_closed = False
         self._state_lock = threading.RLock()
         self._frames: queue.Queue[bytes | object] = queue.Queue(maxsize=32)
         self._results: queue.Queue[TencentRecognitionResult] = queue.Queue(maxsize=128)
         self._partials: dict[int, str] = {}
         self._stable: dict[int, str] = {}
+        self._transcript_bytes = 0
         self._last_index = -1
         self._last_slice_type = -1
         self._error: RuntimeError | None = None
@@ -144,8 +153,8 @@ class TencentRealtimeSession:
                 max_size=config.max_json_bytes,
                 compression=None,
             )
-        except Exception as exc:
-            raise RuntimeError("Tencent realtime ASR connection failed.") from exc
+        except Exception:
+            raise RuntimeError("Tencent realtime ASR connection failed.") from None
         self._writer = threading.Thread(target=self._writer_loop, name="tencent-asr-writer", daemon=True)
         self._reader = threading.Thread(target=self._reader_loop, name="tencent-asr-reader", daemon=True)
         self._writer.start()
@@ -195,10 +204,7 @@ class TencentRealtimeSession:
                 return
             self._closed = True
             self._cancelled.set()
-            try:
-                self._websocket.close()
-            except Exception:
-                pass
+            self._close_socket()
             try:
                 self._frames.put_nowait(_END)
             except queue.Full:
@@ -213,6 +219,7 @@ class TencentRealtimeSession:
         with self._state_lock:
             self._partials.clear()
             self._stable.clear()
+            self._transcript_bytes = 0
 
     def _put_frame(self, frame: bytes | object) -> None:
         if self._cancelled.is_set():
@@ -233,7 +240,7 @@ class TencentRealtimeSession:
                 except queue.Empty:
                     continue
                 if frame is _END:
-                    self._websocket.send('{"type":"end"}', timeout=self.config.write_timeout_s)
+                    self._websocket.send('{"type":"end"}')
                     return
                 assert isinstance(frame, bytes)
                 if origin is None:
@@ -242,7 +249,7 @@ class TencentRealtimeSession:
                 delay = target - self._clock()
                 if delay > 0:
                     self._sleep(delay)
-                self._websocket.send(frame, timeout=self.config.write_timeout_s)
+                self._websocket.send(frame)
                 samples_written += len(frame) // 2
         except Exception:
             if not self._cancelled.is_set():
@@ -294,10 +301,18 @@ class TencentRealtimeSession:
                 self._last_index = index
                 self._last_slice_type = slice_type
                 if slice_type == 1:
+                    self._transcript_bytes -= len(self._partials.get(index, "").encode())
+                    self._transcript_bytes += len(text.encode())
+                    if self._transcript_bytes > self.config.max_transcript_bytes:
+                        raise ValueError("provider transcript state is too large")
                     self._partials[index] = text
                     self._queue_result(TencentRecognitionResult(text, final=False, stable=False))
                 elif slice_type == 2:
-                    self._partials.pop(index, None)
+                    self._transcript_bytes -= len(self._partials.pop(index, "").encode())
+                    self._transcript_bytes -= len(self._stable.get(index, "").encode())
+                    self._transcript_bytes += len(text.encode())
+                    if self._transcript_bytes > self.config.max_transcript_bytes:
+                        raise ValueError("provider transcript state is too large")
                     self._stable[index] = text
 
         final = payload.get("final", 0)
@@ -321,6 +336,17 @@ class TencentRealtimeSession:
                 self._error = RuntimeError(message)
         self._cancelled.set()
         self._terminal.set()
+        self._close_socket()
+
+    def _close_socket(self) -> None:
+        with self._socket_close_lock:
+            if self._socket_closed:
+                return
+            self._socket_closed = True
+            try:
+                self._websocket.close()
+            except Exception:
+                pass
 
     def _raise_if_failed(self) -> None:
         if self._error is not None:

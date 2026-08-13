@@ -4,8 +4,10 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import queue
 import time
+import traceback
 from urllib.parse import parse_qs, quote, urlsplit
 
 import numpy as np
@@ -28,7 +30,7 @@ class FakeWebSocket:
         self.incoming: queue.Queue[object] = queue.Queue()
         self.closed = False
 
-    def send(self, message, timeout=None):
+    def send(self, message, text=None):
         if isinstance(message, bytes):
             self.binary_messages.append(message)
         else:
@@ -184,6 +186,29 @@ def test_tencent_url_signing_uses_the_exact_canonical_query_without_exposing_sec
     assert "sentinel-secret" not in url + repr(config) + caplog.text
 
 
+def test_connection_failure_formatted_traceback_cannot_expose_the_signed_url(caplog):
+    config = realtime_config(secret_id="sentinel-secret-id")
+
+    def reject_connection(url, **_kwargs):
+        raise OSError(f"dial failed for {url}")
+
+    with pytest.raises(RuntimeError) as raised:
+        TencentRealtimeSession(config, connect_fn=reject_connection)
+
+    with caplog.at_level(logging.ERROR):
+        try:
+            raise raised.value
+        except RuntimeError:
+            logging.getLogger("test.tencent.connection").exception("Tencent connection failed")
+
+    formatted = "".join(traceback.format_exception(raised.value)) + logging.Formatter().format(caplog.records[-1])
+    assert raised.value.__cause__ is None
+    assert "sentinel-secret-id" not in formatted
+    assert "secretid=" not in formatted
+    assert "signature=" not in formatted
+    assert "wss://" not in formatted
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
@@ -192,11 +217,22 @@ def test_tencent_url_signing_uses_the_exact_canonical_query_without_exposing_sec
         ({"secret_key": ""}, "secret_key"),
         ({"engine": ""}, "engine"),
         ({"endpoint": "https://example.com/path"}, "endpoint"),
+        ({"endpoint": "example.com?x=1"}, "endpoint"),
+        ({"endpoint": "example.com#fragment"}, "endpoint"),
+        ({"endpoint": "user@example.com"}, "endpoint"),
+        ({"endpoint": "asr.cloud.tencent.com:443"}, "endpoint"),
+        ({"endpoint": "asr.cloud.tencent.com\n"}, "endpoint"),
+        ({"endpoint": "ASR.CLOUD.TENCENT.COM"}, "endpoint"),
         ({"connect_timeout_s": 0}, "connect_timeout_s"),
         ({"read_timeout_s": 0}, "read_timeout_s"),
         ({"write_timeout_s": 0}, "write_timeout_s"),
         ({"final_timeout_s": 0}, "final_timeout_s"),
         ({"close_timeout_s": 0}, "close_timeout_s"),
+        ({"connect_timeout_s": True}, "connect_timeout_s"),
+        ({"read_timeout_s": float("nan")}, "read_timeout_s"),
+        ({"write_timeout_s": float("inf")}, "write_timeout_s"),
+        ({"final_timeout_s": float("-inf")}, "final_timeout_s"),
+        ({"close_timeout_s": "1"}, "close_timeout_s"),
         ({"max_frame_bytes": 1}, "max_frame_bytes"),
         ({"max_frame_bytes": 6401}, "max_frame_bytes"),
         ({"max_json_bytes": 1024 * 1024 + 1}, "max_json_bytes"),
@@ -292,6 +328,37 @@ def test_session_rejects_invalid_provider_events_without_leaking_payload(event):
         session.finish(np.zeros(0, dtype=np.float32))
 
     assert "sentinel-secret" not in str(raised.value)
+    session.close()
+
+
+def test_reader_failure_immediately_closes_socket_without_waiting_for_another_snapshot():
+    websocket = FakeWebSocket()
+    session = TencentRealtimeSession(
+        realtime_config(),
+        voice_id="voice-async-failure",
+        connect_fn=lambda *_args, **_kwargs: websocket,
+    )
+
+    websocket.provider_event({"code": 1001, "message": "provider rejected request"})
+
+    wait_until(lambda: websocket.closed)
+    session.close()
+
+
+def test_provider_transcript_state_closes_session_when_aggregate_utf8_bound_is_exceeded():
+    websocket = FakeWebSocket()
+    session = TencentRealtimeSession(
+        realtime_config(max_transcript_bytes=6),
+        voice_id="voice-transcript-bound",
+        connect_fn=lambda *_args, **_kwargs: websocket,
+    )
+
+    websocket.provider_event(provider_result("voice-transcript-bound", "你好", slice_type=2, index=0))
+    websocket.provider_event(provider_result("voice-transcript-bound", "a", slice_type=2, index=1))
+
+    wait_until(lambda: websocket.closed)
+    with pytest.raises(RuntimeError, match="invalid provider event"):
+        session.finish(np.zeros(0, dtype=np.float32))
     session.close()
 
 
