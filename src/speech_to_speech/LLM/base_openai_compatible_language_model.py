@@ -3,10 +3,10 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
+from time import perf_counter
 from typing import Any, Optional
 
 import httpx
-from nltk import sent_tokenize
 from openai import OpenAI
 from openai.types.realtime.conversation_item import (
     RealtimeConversationItemAssistantMessage,
@@ -29,7 +29,7 @@ from speech_to_speech.LLM.chat import (
 )
 from speech_to_speech.LLM.compaction_prompt import CompactGenerateFn, build_compactor
 from speech_to_speech.LLM.text_prompt import build_text_system_prompt
-from speech_to_speech.LLM.utils import remove_unspeechable, resolve_auto_language
+from speech_to_speech.LLM.utils import remove_unspeechable, resolve_auto_language, split_spoken_units
 from speech_to_speech.LLM.voice_prompt import build_voice_system_prompt
 from speech_to_speech.pipeline.cancel_scope import CancelScope
 from speech_to_speech.pipeline.handler_types import LLMIn, LLMOut
@@ -327,10 +327,18 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
 
     # ── consumption ─────────────────────────────────────────────────────────--
 
-    def _consume_streaming(self, events: Iterator[ProviderEvent], state: _GenState, turn: _Turn) -> Iterator[LLMOut]:
+    def _consume_streaming(
+        self,
+        events: Iterator[ProviderEvent],
+        state: _GenState,
+        turn: _Turn,
+        request_started_at_s: float | None = None,
+    ) -> Iterator[LLMOut]:
         cancelled = False
         printable_text = ""
         sentence_batch: list[str] = []
+        first_flush_done = False
+        first_token_logged = False
 
         def _flush(batch: list[str]) -> Iterator[LLMOut]:
             if not batch:
@@ -339,6 +347,9 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
                 logger.info("LLM generation cancelled (stale speculative turn)")
                 return
             yield self._chunk(turn, text=" ".join(batch))
+
+        def _batch_limit() -> int:
+            return 1 if not first_flush_done else self.stream_batch_sentences
 
         for event in events:
             if self._generation_is_stale(turn.gen) or not self._turn_is_latest(turn.turn_id, turn.turn_revision):
@@ -365,8 +376,28 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
                         break
                     yield from _flush(sentence_batch)
                     sentence_batch = []
+                    first_flush_done = True
                 yield from self._record_tool_call(state, turn, event.item)
             elif isinstance(event, TextDelta):
+                if (
+                    request_started_at_s is not None
+                    and not first_token_logged
+                    and event.text
+                ):
+                    first_token_logged = True
+                    logger.info(
+                        "LLM first token in %.3fs (turn=%s rev=%s)",
+                        perf_counter() - request_started_at_s,
+                        turn.turn_id,
+                        turn.turn_revision,
+                    )
+                    if turn.speech_stopped_at_s is not None:
+                        logger.info(
+                            "Last speech detected to LLM first token: %.3fs (turn=%s rev=%s)",
+                            perf_counter() - turn.speech_stopped_at_s,
+                            turn.turn_id,
+                            turn.turn_revision,
+                        )
                 if not turn.wants_audio:
                     # Text-only: forward verbatim. Keep every character (no
                     # remove_unspeechable, which strips TTS-unfriendly symbols) and
@@ -382,20 +413,19 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
                 new_text = remove_unspeechable(event.text)
                 state.clean_text += new_text
                 printable_text += new_text
-                sentences = sent_tokenize(printable_text)
-                if len(sentences) > 1:
-                    for s in sentences[:-1]:
-                        sentence_batch.append(s)
-                        if len(sentence_batch) >= self.stream_batch_sentences:
-                            if not self._turn_output_allowed(turn.turn_id, turn.turn_revision):
-                                logger.info("LLM generation cancelled (stale speculative turn)")
-                                cancelled = True
-                                break
-                            yield from _flush(sentence_batch)
-                            sentence_batch = []
-                    if cancelled:
-                        break
-                    printable_text = sentences[-1]
+                complete, printable_text = split_spoken_units(printable_text)
+                for sentence in complete:
+                    sentence_batch.append(sentence)
+                    if len(sentence_batch) >= _batch_limit():
+                        if not self._turn_output_allowed(turn.turn_id, turn.turn_revision):
+                            logger.info("LLM generation cancelled (stale speculative turn)")
+                            cancelled = True
+                            break
+                        yield from _flush(sentence_batch)
+                        sentence_batch = []
+                        first_flush_done = True
+                if cancelled:
+                    break
 
         if not cancelled:
             if printable_text.strip():
@@ -461,12 +491,13 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
             error_message = "Cannot generate a response: no instructions and no input were provided."
 
         try:
+            request_started_at_s = perf_counter()
             if error_message is None:
                 api_response = self._request(api_input, optional_kwargs)
             if api_response is not None:
                 events = self._iter_events(api_response)
                 if self.stream:
-                    yield from self._consume_streaming(events, state, turn)
+                    yield from self._consume_streaming(events, state, turn, request_started_at_s)
                 else:
                     yield from self._consume_nonstreaming(events, state, turn)
         except httpx.ReadTimeout:

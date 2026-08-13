@@ -267,6 +267,43 @@ def test_process_preserves_streamed_text_after_function_call_order():
     assert isinstance(outputs[3], EndOfResponse)
 
 
+def test_process_flushes_first_sentence_before_batch_limit():
+    handler = _make_handler()
+    handler.stream_batch_sentences = 3
+    streamed_events = [
+        _make_text_delta_event("Hello. How are you? I am fine."),
+        _make_output_item_done_event(content="Hello. How are you? I am fine."),
+    ]
+    handler.client = SimpleNamespace(
+        responses=SimpleNamespace(create=lambda **kwargs: _make_stream(streamed_events))
+    )
+
+    outputs = list(handler.process(_make_request("Hi")))
+    texts = [item.text for item in outputs if isinstance(item, LLMResponseChunk) and item.text]
+
+    assert texts[0] == "Hello."
+    assert "How are you?" in texts[-1]
+    assert "I am fine." in texts[-1]
+
+
+def test_process_flushes_first_chinese_sentence_immediately():
+    handler = _make_handler()
+    handler.stream_batch_sentences = 3
+    streamed_events = [
+        _make_text_delta_event("你好。后面还有一句。"),
+        _make_output_item_done_event(content="你好。后面还有一句。"),
+    ]
+    handler.client = SimpleNamespace(
+        responses=SimpleNamespace(create=lambda **kwargs: _make_stream(streamed_events))
+    )
+
+    outputs = list(handler.process(_make_request("Hi")))
+    texts = [item.text for item in outputs if isinstance(item, LLMResponseChunk) and item.text]
+
+    assert texts[0] == "你好。"
+    assert texts[-1] == "后面还有一句。"
+
+
 def test_process_preserves_nonstreaming_text_tool_text_order():
     handler = _make_handler(stream=False)
 

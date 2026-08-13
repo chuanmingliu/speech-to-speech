@@ -26,9 +26,10 @@ Useful optional settings:
 
 ```text
 DEEPSEEK_API_BASE=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_MODEL=deepseek-v4-flash
 TENCENT_ASR_ENGINE=16k_zh
 TENCENT_ASR_LANGUAGE=zh
+TENCENT_ASR_APP_ID=
 MINIMAX_TTS_MODEL=speech-2.8-turbo
 MINIMAX_TTS_LANGUAGE_BOOST=auto
 ```
@@ -104,7 +105,7 @@ printed by the launcher. Confirm:
 - one accepted WebSocket session;
 - one final ASR transcript;
 - one LLM response;
-- one successful MiniMax HTTP response;
+- one successful MiniMax streaming HTTP response;
 - one `response.done`;
 - a nonempty 16 kHz mono WAV.
 

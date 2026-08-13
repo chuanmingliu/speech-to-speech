@@ -68,7 +68,7 @@ def smoke_deepseek(prompt: str) -> str:
         base_url=os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com"),
     )
     response = client.chat.completions.create(
-        model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+        model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
         messages=[
             {"role": "system", "content": "Reply with one short sentence."},
             {"role": "user", "content": prompt},

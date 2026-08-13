@@ -5,10 +5,12 @@
   "stt": "tencent",
   "enable_live_transcription": false,
   "llm_backend": "chat-completions",
-  "model_name": "deepseek-chat",
+  "model_name": "deepseek-v4-flash",
   "responses_api_base_url": "https://api.deepseek.com",
   "responses_api_stream": true,
   "responses_api_disable_thinking": false,
+  "stream_batch_sentences": 1,
+  "speech_pad_ms": 80,
   "tts": "minimax",
   "num_pipelines": 1,
   "log_level": "info"

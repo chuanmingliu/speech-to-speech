@@ -4,6 +4,7 @@ import re
 from typing import Optional
 
 import requests  # type: ignore[import-untyped]
+from nltk import sent_tokenize
 from PIL import Image
 
 SMART_PUNCT_TRANSLATION = str.maketrans(
@@ -16,7 +17,7 @@ SMART_PUNCT_TRANSLATION = str.maketrans(
 )
 
 SPEECHABLE_PATTERN = re.compile(
-    r"[^\w\s.,!?;:'\"\-()\/\\@#%&*+=$€£¥₹₽¢\[\]{}<>~`^|…—–\n\r\t]",
+    r"[^\w\s.,!?;:'\"\-()\/\\@#%&*+=$€£¥₹₽¢\[\]{}<>~`^|…—–\n\r\t。！？；、，：]",
     flags=re.UNICODE,
 )
 
@@ -27,6 +28,47 @@ def remove_unspeechable(text: str) -> str:
     """
     text = text.translate(SMART_PUNCT_TRANSLATION)
     return SPEECHABLE_PATTERN.sub("", text)
+
+
+# nltk.sent_tokenize (punkt) does not treat CJK full stops as sentence
+# boundaries, so a Chinese reply would otherwise sit in the LLM buffer until
+# the stream ended. Flush as soon as a spoken terminator lands.
+_SENTENCE_END_CHARS = frozenset(".!?。！？；…")
+_CJK_LOOKBEHIND_SPLIT = re.compile(r"(?<=[。！？；…])")
+
+
+def split_spoken_sentences(text: str) -> list[str]:
+    """Split spoken text into sentences, including a possibly incomplete tail.
+
+    CJK spans are split on ``。！？；…``. Latin spans still go through
+    ``nltk.sent_tokenize`` so abbreviations and decimals stay intact.
+    """
+    if not text:
+        return []
+
+    sentences: list[str] = []
+    for part in _CJK_LOOKBEHIND_SPLIT.split(text):
+        if not part:
+            continue
+        latin = sent_tokenize(part)
+        sentences.extend(latin if latin else [part])
+    return sentences
+
+
+def split_spoken_units(text: str) -> tuple[list[str], str]:
+    """Return ``(complete_sentences, remainder)``.
+
+    A sentence is complete when it ends with a spoken terminator. The remainder
+    is the unfinished tail that must stay buffered for the next token.
+    """
+    sentences = split_spoken_sentences(text)
+    if not sentences:
+        return [], ""
+    last = sentences[-1]
+    stripped = last.rstrip()
+    if stripped and stripped[-1] in _SENTENCE_END_CHARS:
+        return sentences, ""
+    return sentences[:-1], last
 
 
 WHISPER_LANGUAGE_TO_LLM_LANGUAGE = {

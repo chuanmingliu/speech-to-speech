@@ -8,7 +8,6 @@ from threading import Lock, Thread
 from typing import Any, Literal, Optional, Protocol, runtime_checkable
 
 import torch
-from nltk import sent_tokenize
 from openai.types.realtime.realtime_conversation_item_function_call import (
     RealtimeConversationItemFunctionCall,
 )
@@ -44,7 +43,13 @@ from speech_to_speech.LLM.text_prompt import build_text_system_prompt
 from speech_to_speech.LLM.tool_call.function_call import extract_function_calls_from_text
 from speech_to_speech.LLM.tool_call.function_tool import FunctionTool
 from speech_to_speech.LLM.tool_call.tool_prompt import END_CODE, ENTER_CODE, build_block_regex, build_tool_system_prompt
-from speech_to_speech.LLM.utils import image_url_to_pil, remove_unspeechable, resolve_auto_language
+from speech_to_speech.LLM.utils import (
+    image_url_to_pil,
+    remove_unspeechable,
+    resolve_auto_language,
+    split_spoken_sentences,
+    split_spoken_units,
+)
 from speech_to_speech.LLM.voice_prompt import build_voice_system_prompt
 from speech_to_speech.pipeline.cancel_scope import CancelScope
 from speech_to_speech.pipeline.handler_types import LLMIn, LLMOut
@@ -131,6 +136,7 @@ class StreamContext(BaseModel):
     end_code: Optional[str] = None
     input_tokens: int = 0
     sentence_batch: list[str] = Field(default_factory=list)
+    first_sentence_flushed: bool = False
     turn_id: str | None = None
     turn_revision: int | None = None
     speech_stopped_at_s: float | None = None
@@ -313,7 +319,7 @@ class BaseLanguageModelHandler(BaseHandler[LLMIn, LLMOut], ABC):
             before = printable_text[:idx]
             code_and_after = printable_text[idx:]
             if before.strip():
-                for s in sent_tokenize(before):
+                for s in split_spoken_sentences(before):
                     ctx.sentence_batch.append(s)
             if ctx.sentence_batch:
                 chunks.append(
@@ -388,25 +394,26 @@ class BaseLanguageModelHandler(BaseHandler[LLMIn, LLMOut], ABC):
             return chunks, tools, ""
 
         if printable_text:
-            sentences = sent_tokenize(printable_text)
-            if len(sentences) > 1:
-                for s in sentences[:-1]:
-                    ctx.sentence_batch.append(s)
-                    if len(ctx.sentence_batch) >= self.stream_batch_sentences:
-                        chunks.append(
-                            LLMResponseChunk(
-                                text=" ".join(ctx.sentence_batch),
-                                language_code=language_code,
-                                runtime_config=runtime_config,
-                                response=response,
-                                turn_id=ctx.turn_id,
-                                turn_revision=ctx.turn_revision,
-                                speech_stopped_at_s=ctx.speech_stopped_at_s,
-                                cancel_generation=ctx.cancel_generation,
-                            )
+            complete, printable_text = split_spoken_units(printable_text)
+            batch_limit = 1 if not ctx.first_sentence_flushed else self.stream_batch_sentences
+            for sentence in complete:
+                ctx.sentence_batch.append(sentence)
+                if len(ctx.sentence_batch) >= batch_limit:
+                    chunks.append(
+                        LLMResponseChunk(
+                            text=" ".join(ctx.sentence_batch),
+                            language_code=language_code,
+                            runtime_config=runtime_config,
+                            response=response,
+                            turn_id=ctx.turn_id,
+                            turn_revision=ctx.turn_revision,
+                            speech_stopped_at_s=ctx.speech_stopped_at_s,
+                            cancel_generation=ctx.cancel_generation,
                         )
-                        ctx.sentence_batch = []
-                printable_text = sentences[-1]
+                    )
+                    ctx.sentence_batch = []
+                    ctx.first_sentence_flushed = True
+                    batch_limit = self.stream_batch_sentences
 
         return chunks, tools, printable_text
 

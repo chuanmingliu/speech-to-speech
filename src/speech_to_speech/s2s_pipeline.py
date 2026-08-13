@@ -277,8 +277,20 @@ def overwrite_device_argument(common_device: Optional[str], *handler_kwargs: Any
                 kwargs.qwen3_tts_device = common_device
 
 
+def enable_tencent_realtime_transcription(module_kwargs: ModuleArguments) -> None:
+    """Stream VAD audio into Tencent realtime ASR when an AppId is configured."""
+    if module_kwargs.stt != "tencent":
+        return
+    if not os.getenv("TENCENT_ASR_APP_ID", "").strip():
+        return
+    module_kwargs.enable_live_transcription = True
+    if module_kwargs.live_transcription_update_interval >= 0.5:
+        module_kwargs.live_transcription_update_interval = 0.2
+
+
 def prepare_module_args(module_kwargs: ModuleArguments, *handler_kwargs: Any) -> None:
     optimal_mac_settings(module_kwargs.local_mac_optimal_settings, module_kwargs, *handler_kwargs)
+    enable_tencent_realtime_transcription(module_kwargs)
     if module_kwargs.tts is None:
         module_kwargs.tts = "qwen3"
     if platform == "darwin":

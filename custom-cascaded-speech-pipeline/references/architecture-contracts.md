@@ -32,17 +32,17 @@ Accept VAD audio as normalized floating-point samples and emit a
 `Transcription`. Convert to the provider's required encoding at the adapter
 boundary.
 
-For Tencent `SentenceRecognition`:
+For Tencent ASR:
 
-- consume only `mode="final"` messages;
-- ignore progressive snapshots to avoid duplicate billable requests;
 - convert finite float samples to clipped little-endian PCM16;
-- use 16 kHz mono PCM and base64-encode it;
-- reject utterances over the provider's 60-second limit;
-- preserve turn ID, revision, and speech stop timestamp.
-
-If replacing Tencent with a streaming ASR, progressive audio may be useful, but
-deduplicate partials and still emit an authoritative final transcript.
+- preserve turn ID, revision, and speech stop timestamp;
+- when `TENCENT_ASR_APP_ID` is set, stream progressive PCM over the
+  realtime WebSocket API (`needvad=0`, `voice_format=1`) and emit
+  `PartialTranscription` updates, then one final `Transcription`;
+- otherwise use `SentenceRecognition` on finalized audio, with one
+  background prefetch on trailing silence that is reused when the extra
+  tail is short;
+- reject SentenceRecognition utterances over the provider's 60-second limit.
 
 ## LLM contract
 
@@ -53,7 +53,7 @@ data:
 ```json
 {
   "llm_backend": "chat-completions",
-  "model_name": "deepseek-chat",
+  "model_name": "deepseek-v4-flash",
   "responses_api_base_url": "https://api.deepseek.com",
   "responses_api_stream": true
 }
@@ -72,21 +72,17 @@ events separate from spoken text.
 Accept `TTSInput` text or `EndOfResponse`. Emit fixed-size NumPy `int16` PCM
 chunks and finally the audio-done sentinel.
 
-For MiniMax synchronous T2A:
+For MiniMax T2A:
 
 - send Bearer authorization;
-- request hex-encoded WAV, 16 kHz, one channel;
+- stream by default (`stream=true`) and request hex-encoded 16 kHz mono PCM;
+- parse SSE `data:` frames as they arrive and yield PCM16 chunks immediately;
+- skip aggregated `status=2` audio when incremental `status=1` frames already played;
+- fall back to a single hex WAV response when `MINIMAX_TTS_STREAM=false`;
 - check both HTTP status and `base_resp.status_code`;
-- validate WAV channel count, PCM16 width, and sample rate;
-- chunk decoded samples and pad the final block;
-- check cancellation before yielding every chunk;
+- check cancellation before yielding every chunk and while reading the stream;
 - drop stale turn revisions before making the request;
 - close owned HTTP clients during cleanup.
-
-The current synchronous request minimizes adapter complexity but adds
-time-to-first-audio. A future streaming MiniMax adapter should incrementally
-decode provider frames while retaining the same PCM chunk and cancellation
-contract.
 
 ## Configuration boundary
 
@@ -130,7 +126,9 @@ miswiring, cancellation, or playback failures.
 
 1. Add a provider registry so new adapters register without expanding central
    conditionals.
-2. Add true streaming ASR and TTS adapters for lower time-to-first-audio.
+2. MiniMax TTS streams hex PCM. Tencent realtime WebSocket ASR is used when
+   an AppId is configured; otherwise SentenceRecognition prefetches on trailing
+   silence.
 3. Add per-stage timeout, bounded transient retry, and circuit-breaker policy.
 4. Add optional fallback providers with explicit format-normalization tests.
 5. Add structured safe telemetry keyed by session and turn IDs.

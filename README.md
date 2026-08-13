@@ -194,10 +194,12 @@ pip install "speech-to-speech[tencent-asr]"
 speech-to-speech configs/tencent-deepseek-minimax.json
 ```
 
-The server listens at `ws://localhost:8765/v1/realtime`. Tencent
-`SentenceRecognition` is called only for VAD-finalized utterances, so live partial
-transcription is disabled in this profile. MiniMax uses synchronous T2A HTTP output
-and converts its 16 kHz mono WAV response into the pipeline's PCM16 chunks. Set
+The server listens at `ws://localhost:8765/v1/realtime`. Set
+`TENCENT_ASR_APP_ID` to stream microphone audio into Tencent's realtime
+WebSocket ASR while the user is still speaking. Without it, Tencent
+`SentenceRecognition` runs on VAD-finalized utterances. MiniMax streams hex-encoded 16 kHz
+mono PCM over T2A HTTP SSE so playback can start before the sentence finishes.
+Set `MINIMAX_TTS_STREAM=false` to wait for a single WAV instead. Set
 `MINIMAX_TTS_ENDPOINT=https://api.minimaxi.com/v1/t2a_v2` for China-platform
 keys or `https://api.minimax.io/v1/t2a_v2` for global-platform keys.
 
@@ -590,7 +592,7 @@ For example:
 --model_name google/gemma-2b-it
 
 # OpenAI-compatible backend
---llm_backend responses-api --model_name deepseek-chat --responses_api_base_url https://api.deepseek.com
+--llm_backend responses-api --model_name deepseek-v4-flash --responses_api_base_url https://api.deepseek.com
 ```
 
 ### Generation Parameters

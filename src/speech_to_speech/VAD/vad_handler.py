@@ -136,6 +136,7 @@ class VADHandler(BaseHandler[VADIn, VADOut]):
         self._last_final_audio_ms: int | None = None
         self._pending_reopen_candidate: tuple[str, int, int] | None = None
         self._pending_short_segment: _PendingShortSegment | None = None
+        self._silence_prefetch_emitted = False
 
     @property
     def _audio_ms(self) -> int:
@@ -566,8 +567,52 @@ class VADHandler(BaseHandler[VADIn, VADOut]):
             # Original mode: yield only when speech ends
             yield from self._process_normal(vad_output)
 
+    def _maybe_yield_silence_prefetch(self) -> Iterator[VADOut]:
+        """Emit one progressive snapshot when trailing silence starts.
+
+        SentenceRecognition can start during ``min_silence_ms`` instead of
+        waiting for VAD to finalize the utterance.
+        """
+        if not getattr(self.iterator, "triggered", False):
+            self._silence_prefetch_emitted = False
+            return
+        if not getattr(self.iterator, "temp_end", 0):
+            self._silence_prefetch_emitted = False
+            return
+        if self._silence_prefetch_emitted:
+            return
+        if not hasattr(self.iterator, "buffer") or not self.iterator.buffer:
+            return
+
+        array = torch.cat(self.iterator.speech_buffer()).cpu().numpy()
+        duration_ms = len(array) / self.sample_rate * 1000
+        active_speech_duration_ms = self._current_active_speech_duration_ms()
+        start_ms = max(0, self._audio_ms - int(self._speech_buffer_duration_ms()))
+        if active_speech_duration_ms < self._active_speech_min_ms(start_ms):
+            return
+
+        self._silence_prefetch_emitted = True
+        self._log_progressive_yields += 1
+        turn_id, turn_revision = self._current_turn_metadata()
+        logger.debug(
+            "VAD: yielding silence-prefetch audio (segment=%.0fms, active=%.0fms, turn=%s rev=%s)",
+            duration_ms,
+            active_speech_duration_ms,
+            turn_id,
+            turn_revision,
+        )
+        yield VADAudio(
+            audio=self._combined_turn_audio(array),
+            mode="progressive",
+            turn_id=turn_id,
+            turn_revision=turn_revision,
+        )
+
     def _process_realtime(self, vad_output: list[torch.Tensor] | None) -> Iterator[VADOut]:
         """Process with real-time progressive audio release."""
+        if vad_output is None:
+            yield from self._maybe_yield_silence_prefetch()
+
         # Check if we're currently in a speech segment.
         if self.enable_realtime_transcription and hasattr(self.iterator, "buffer") and len(self.iterator.buffer) > 0:
             current_time = time.time()
@@ -600,6 +645,7 @@ class VADHandler(BaseHandler[VADIn, VADOut]):
 
         # Handle end of speech
         if vad_output is not None:
+            self._silence_prefetch_emitted = False
             if len(vad_output) == 0:
                 logger.info("VAD: phantom trigger (empty buffer), closing speech pair")
                 if self._speech_started_emitted and self.text_output_queue:
@@ -845,6 +891,7 @@ class VADHandler(BaseHandler[VADIn, VADOut]):
         self._last_final_wall_time = None
         self._last_final_audio_ms = None
         self._pending_reopen_candidate = None
+        self._silence_prefetch_emitted = False
         if self.speculative_turns:
             self.speculative_turns.reset()
         self.should_listen.set()
