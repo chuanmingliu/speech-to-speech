@@ -44,6 +44,7 @@ def test_load_env_file_rejects_malformed_entries(tmp_path):
 def test_require_environment_sets_openai_alias(monkeypatch):
     values = {
         "DEEPSEEK_API_KEY": "deepseek",
+        "TENCENT_ASR_APP_ID": "app-id",
         "TENCENT_ASR_SECRET_ID": "id",
         "TENCENT_ASR_SECRET_KEY": "key",
         "MINIMAX_TTS_API_KEY": "minimax",
@@ -61,6 +62,7 @@ def test_require_environment_sets_openai_alias(monkeypatch):
 def test_require_environment_reports_missing_names(monkeypatch):
     for name in (
         "DEEPSEEK_API_KEY",
+        "TENCENT_ASR_APP_ID",
         "TENCENT_ASR_SECRET_ID",
         "TENCENT_ASR_SECRET_KEY",
         "MINIMAX_TTS_API_KEY",
@@ -69,6 +71,22 @@ def test_require_environment_reports_missing_names(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
     with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
+        require_environment()
+
+
+def test_require_environment_reports_missing_tencent_app_id(monkeypatch):
+    values = {
+        "DEEPSEEK_API_KEY": "deepseek",
+        "TENCENT_ASR_SECRET_ID": "id",
+        "TENCENT_ASR_SECRET_KEY": "key",
+        "MINIMAX_TTS_API_KEY": "minimax",
+        "MINIMAX_TTS_VOICE_ID": "voice",
+    }
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("TENCENT_ASR_APP_ID", raising=False)
+
+    with pytest.raises(RuntimeError, match="TENCENT_ASR_APP_ID"):
         require_environment()
 
 

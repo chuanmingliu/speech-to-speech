@@ -18,6 +18,7 @@ DEFAULT_ENV_FILE = REPO_ROOT / ".env.local"
 DEFAULT_PROFILE = REPO_ROOT / "configs" / "tencent-deepseek-minimax.json"
 REQUIRED_ENV = (
     "DEEPSEEK_API_KEY",
+    "TENCENT_ASR_APP_ID",
     "TENCENT_ASR_SECRET_ID",
     "TENCENT_ASR_SECRET_KEY",
     "MINIMAX_TTS_API_KEY",

@@ -21,7 +21,9 @@ from speech_to_speech.LLM.chat import Chat, make_user_message
 from speech_to_speech.LLM.chat_completions_language_model import ChatCompletionsApiModelHandler
 from speech_to_speech.LLM.lm_output_processor import LMOutputProcessor
 from speech_to_speech.pipeline.cancel_scope import CancelScope
+from speech_to_speech.pipeline.events import PartialTranscriptionEvent
 from speech_to_speech.pipeline.messages import (
+    PIPELINE_END,
     AudioOutput,
     GenerateResponseRequest,
     LLMResponseChunk,
@@ -30,6 +32,7 @@ from speech_to_speech.pipeline.messages import (
     TTSInput,
     VADAudio,
 )
+from speech_to_speech.pipeline.speculative_turns import SpeculativeTurnTracker
 from speech_to_speech.s2s_pipeline import parse_arguments
 from speech_to_speech.STT.tencent_asr_handler import TencentASRHandler
 from speech_to_speech.STT.tencent_realtime_client import TencentRecognitionResult
@@ -449,13 +452,19 @@ class _PipelineMiniMaxSocket:
     def __init__(self, received):
         self.received = deque(received)
         self.sent = []
+        self.delivered_audio_fragments = []
         self.closed = False
 
     def recv(self, timeout=None, decode=None):
         if not self.received:
             raise TimeoutError
         item = self.received.popleft()
-        return item() if callable(item) else item
+        message = item() if callable(item) else item
+        payload = json.loads(message)
+        audio = payload.get("data", {}).get("audio")
+        if audio:
+            self.delivered_audio_fragments.append(audio)
+        return message
 
     def send(self, message, text=None):
         self.sent.append(json.loads(message))
@@ -541,6 +550,14 @@ def test_end_to_end_provider_streaming_timing_order_and_barge_in_fencing():
     assert isinstance(partial, PartialTranscription)
     assert sessions[0].terminal.is_set() is False
     assert list(notifier.process(partial)) == []
+    partial_event = transcript_events.get_nowait()
+    assert partial_event == PartialTranscriptionEvent(
+        delta="live words",
+        turn_id="turn-e2e",
+        turn_revision=0,
+    )
+    assert transcript_events.empty()
+    assert sessions[0].terminal.is_set() is False
 
     final_audio = np.arange(6_400, dtype=np.int16)
     final = list(
@@ -568,6 +585,8 @@ def test_end_to_end_provider_streaming_timing_order_and_barge_in_fencing():
     tts_input = list(processor.process(first_sentence))[0]
 
     encoded = _encoded_pipeline_mp3()
+    fragments = [encoded[:317], encoded[317:1231], encoded[1231:]]
+    assert all(fragments)
     tts_terminal = threading.Event()
 
     def terminal_audio_event():
@@ -578,7 +597,10 @@ def test_end_to_end_provider_streaming_timing_order_and_barge_in_fencing():
         [
             _minimax_event("connected_success"),
             _minimax_event("task_started"),
-            _minimax_event(data={"audio": encoded.hex()}, is_final=False),
+            *(
+                _minimax_event(data={"audio": fragment.hex()}, is_final=False)
+                for fragment in fragments
+            ),
             terminal_audio_event,
             _minimax_event(data={}, is_final=True),
             _minimax_event("task_finished"),
@@ -615,6 +637,7 @@ def test_end_to_end_provider_streaming_timing_order_and_barge_in_fencing():
     reference_pcm = reference_decoder.feed(encoded) + reference_decoder.finish()
     assert len(streamed_pcm) == len(reference_pcm)
     assert all(np.array_equal(actual, expected) for actual, expected in zip(streamed_pcm, reference_pcm))
+    assert websocket.delivered_audio_fragments == [fragment.hex() for fragment in fragments]
     assert [message["event"] for message in websocket.sent] == [
         "task_start",
         "task_continue",
@@ -622,15 +645,32 @@ def test_end_to_end_provider_streaming_timing_order_and_barge_in_fencing():
         "task_finish",
     ]
 
-    # A revision change closes Tencent's prior provider session; late results
-    # cannot re-enter the handler after ownership has moved to the new turn.
-    old_session = TencentSession()
+    # Drive the real handler thread/output fence: the provider releases a late
+    # partial only after the tracker has advanced to the next revision.
+    class LateTencentSession(TencentSession):
+        def __init__(self):
+            super().__init__()
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def push_snapshot(self, audio):
+            self.snapshots.append(audio.copy())
+            self.entered.set()
+            assert self.release.wait(timeout=1.0)
+            self.results = [TencentRecognitionResult("late", final=False, stable=False)]
+
+    old_session = LateTencentSession()
     new_session = TencentSession()
     stale_sessions = iter((old_session, new_session))
+    stale_input = queue.Queue()
+    stale_output = queue.Queue()
+    stale_stop = threading.Event()
+    tracker = SpeculativeTurnTracker()
+    tracker.observe("barge", 0)
     stale_stt = TencentASRHandler(
-        threading.Event(),
-        queue.Queue(),
-        queue.Queue(),
+        stale_stop,
+        stale_input,
+        stale_output,
         setup_kwargs={
             "app_id": "app",
             "secret_id": "id",
@@ -638,12 +678,22 @@ def test_end_to_end_provider_streaming_timing_order_and_barge_in_fencing():
             "session_factory": lambda _config: next(stale_sessions),
         },
     )
-    list(stale_stt.process(VADAudio(audio=np.zeros(1), mode="progressive", turn_id="barge", turn_revision=0)))
-    list(stale_stt.process(VADAudio(audio=np.zeros(1), mode="progressive", turn_id="barge", turn_revision=1)))
+    stale_stt.speculative_turns = tracker
+    stale_worker = threading.Thread(target=stale_stt.run, daemon=True)
+    stale_worker.start()
+    stale_input.put(VADAudio(audio=np.zeros(1), mode="progressive", turn_id="barge", turn_revision=0))
+    assert old_session.entered.wait(timeout=0.2)
+    tracker.observe("barge", 1)
+    old_session.release.set()
+    stale_input.put(VADAudio(audio=np.zeros(1), mode="progressive", turn_id="barge", turn_revision=1))
+    current_partial = stale_output.get(timeout=0.2)
+    assert isinstance(current_partial, PartialTranscription)
+    assert current_partial.turn_revision == 1
+    assert stale_output.empty()
     assert old_session.closed is True
-    old_session.results = [TencentRecognitionResult("late", final=True, stable=True)]
-    old_session.close()
-    assert old_session.drain_results() == []
+    stale_input.put(PIPELINE_END)
+    stale_worker.join(timeout=0.2)
+    assert stale_worker.is_alive() is False
 
     cancel_scope = CancelScope()
     blocked_llm = _CloseReleasedStream()
