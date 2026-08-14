@@ -121,7 +121,9 @@ class TestAppendPcm:
         assert unit.service.handle_audio_commit(conn_id) is not None  # empty buffer errors
 
         unit.service.append_pcm(conn_id, b"\x01\x00" * 512, PIPELINE_SAMPLE_RATE)
-        assert unit.service.handle_audio_commit(conn_id) is None
+        committed = unit.service.handle_audio_commit(conn_id)
+        assert committed is not None
+        assert committed.type == "input_audio_buffer.committed"
 
 
 # ---------------------------------------------------------------------------

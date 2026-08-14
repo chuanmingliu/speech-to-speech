@@ -23,7 +23,12 @@ from speech_to_speech.api.openai_realtime.transports import WebSocketTransport
 from speech_to_speech.api.openai_realtime.websocket_router import create_app
 from speech_to_speech.pipeline.cancel_scope import CancelScope
 from speech_to_speech.pipeline.control import SESSION_END, PipelineControlMessage, is_control_message
-from speech_to_speech.pipeline.events import AssistantTextEvent, SpeechStartedEvent, TokenUsageEvent
+from speech_to_speech.pipeline.events import (
+    AssistantTextEvent,
+    SpeechStartedEvent,
+    TokenUsageEvent,
+    TranscriptionCompletedEvent,
+)
 from speech_to_speech.pipeline.messages import AUDIO_RESPONSE_DONE, PIPELINE_END, AudioOutput
 
 # ---------------------------------------------------------------------------
@@ -179,6 +184,71 @@ class TestClientEventDispatch:
                 chunk, rt_cfg = item
                 assert isinstance(chunk, bytes)
                 assert len(chunk) == CHUNK_SIZE_BYTES
+
+    @pytest.mark.asyncio
+    async def test_audio_commit_ack_is_sent_before_return_and_later_transcript(self, setup):
+        _, service, _, _, _, _, _, _, _ = setup
+        unit = setup[0].state.test_unit
+        conn_id = service.register()
+        websocket = _FakeWebSocket()
+        transport = WebSocketTransport(websocket)  # type: ignore[arg-type]
+        audio_b64 = base64.b64encode(_pcm_bytes(512)).decode("ascii")
+
+        try:
+            await router_module._dispatch_client_event(
+                unit,
+                conn_id,
+                {"type": "input_audio_buffer.append", "audio": audio_b64},
+                transport,
+            )
+            await router_module._dispatch_client_event(
+                unit,
+                conn_id,
+                {"type": "input_audio_buffer.commit", "event_id": "client_commit_1"},
+                transport,
+            )
+
+            assert len(websocket.sent) == 1
+            first = websocket.sent[0]
+            assert first["type"] == "input_audio_buffer.committed"
+            assert first["event_id"].startswith("event_")
+            assert first["event_id"] != "client_commit_1"
+            assert first["previous_item_id"] is None
+
+            await router_module._dispatch_client_event(
+                unit,
+                conn_id,
+                {"type": "input_audio_buffer.append", "audio": audio_b64},
+                transport,
+            )
+            await router_module._dispatch_client_event(
+                unit,
+                conn_id,
+                {"type": "input_audio_buffer.commit", "event_id": "client_commit_2"},
+                transport,
+            )
+
+            assert len(websocket.sent) == 2
+            second = websocket.sent[1]
+            assert second["type"] == "input_audio_buffer.committed"
+            assert second["event_id"] != "client_commit_2"
+            assert second["item_id"] != first["item_id"]
+            assert second["previous_item_id"] == first["item_id"]
+
+            transcript = service.dispatch_pipeline_event(
+                conn_id,
+                TranscriptionCompletedEvent(transcript="later transcript"),
+            )
+            await transport.send_events(transcript)
+
+            assert [event["type"] for event in websocket.sent] == [
+                "input_audio_buffer.committed",
+                "input_audio_buffer.committed",
+                "conversation.item.input_audio_transcription.completed",
+            ]
+            assert websocket.sent[2]["item_id"] == second["item_id"]
+        finally:
+            service.unregister(conn_id)
 
     def test_session_update_applied(self, setup):
         app, service, *_ = setup

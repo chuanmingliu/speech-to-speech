@@ -18,6 +18,7 @@ from openai.types.realtime import (
     ConversationItemInputAudioTranscriptionCompletedEvent,
     ConversationItemInputAudioTranscriptionDeltaEvent,
     InputAudioBufferAppendEvent,
+    InputAudioBufferCommittedEvent,
     InputAudioBufferSpeechStartedEvent,
     InputAudioBufferSpeechStoppedEvent,
     RealtimeErrorEvent,
@@ -492,11 +493,97 @@ class TestDeferConversationItemsDuringResponse:
 
 
 class TestHandleAudioCommit:
-    def test_commit_after_audio(self, service, conn_id):
-        service._state(conn_id).audio_buffer_has_data = True
-        err = service.handle_audio_commit(conn_id)
-        assert err is None
-        assert service._state(conn_id).audio_buffer_has_data is False
+    def _append_full_chunk(self, service, conn_id):
+        chunks = service.append_pcm(conn_id, _pcm_bytes(512), 16000)
+        assert len(chunks) == 1
+
+    def test_manual_commit_allocates_input_item_and_advances_tail(self, service, conn_id):
+        self._append_full_chunk(service, conn_id)
+
+        result = service.handle_audio_commit(conn_id)
+
+        assert isinstance(result, InputAudioBufferCommittedEvent)
+        assert result.event_id.startswith("event_")
+        assert result.item_id.startswith("item_")
+        assert result.previous_item_id is None
+        st = service._state(conn_id)
+        assert st.audio_buffer_has_data is False
+        assert st.last_item_id == result.item_id
+
+    def test_commit_reuses_speech_started_item_and_preserves_its_predecessor(self, service, conn_id):
+        prior = service.handle_conversation_item_create(
+            conn_id,
+            ConversationItemCreateEvent(
+                type="conversation.item.create",
+                item={
+                    "id": "msg_before_audio",
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "before"}],
+                },
+            ),
+        )[0]
+        speech_started = service.dispatch_pipeline_event(conn_id, SpeechStartedEvent())[0]
+        self._append_full_chunk(service, conn_id)
+
+        result = service.handle_audio_commit(conn_id)
+
+        assert isinstance(result, InputAudioBufferCommittedEvent)
+        assert result.item_id == speech_started.item_id
+        assert result.previous_item_id == prior.item.id
+        assert result.previous_item_id != result.item_id
+
+    def test_sequential_commits_allocate_distinct_items(self, service, conn_id):
+        self._append_full_chunk(service, conn_id)
+        first = service.handle_audio_commit(conn_id)
+        self._append_full_chunk(service, conn_id)
+        second = service.handle_audio_commit(conn_id)
+
+        assert isinstance(first, InputAudioBufferCommittedEvent)
+        assert isinstance(second, InputAudioBufferCommittedEvent)
+        assert first.event_id != second.event_id
+        assert first.item_id != second.item_id
+        assert second.previous_item_id == first.item_id
+
+    def test_commit_uses_assistant_item_as_whole_conversation_predecessor(self, service, conn_id):
+        service.dispatch_pipeline_event(conn_id, AssistantTextEvent(text="assistant reply"))
+        assistant_item_id = service._state(conn_id).last_item_id
+        service.finish_response(conn_id)
+        self._append_full_chunk(service, conn_id)
+
+        result = service.handle_audio_commit(conn_id)
+
+        assert isinstance(result, InputAudioBufferCommittedEvent)
+        assert result.previous_item_id == assistant_item_id
+
+    def test_commit_uses_function_output_as_whole_conversation_predecessor(self, service, conn_id):
+        from openai.types.realtime.realtime_conversation_item_function_call import (
+            RealtimeConversationItemFunctionCall,
+        )
+
+        service._state(conn_id).runtime_config.chat.add_item(
+            RealtimeConversationItemFunctionCall(
+                type="function_call", call_id="call_commit", name="lookup", arguments="{}"
+            )
+        )
+        created = service.handle_conversation_item_create(
+            conn_id,
+            ConversationItemCreateEvent(
+                type="conversation.item.create",
+                item={
+                    "id": "fco_function_output",
+                    "type": "function_call_output",
+                    "output": "ok",
+                    "call_id": "call_commit",
+                },
+            ),
+        )[0]
+        self._append_full_chunk(service, conn_id)
+
+        result = service.handle_audio_commit(conn_id)
+
+        assert isinstance(result, InputAudioBufferCommittedEvent)
+        assert result.previous_item_id == created.item.id
 
     def test_commit_empty_buffer(self, service, conn_id):
         err = service.handle_audio_commit(conn_id)

@@ -12,6 +12,7 @@ from openai.types.realtime import (
     ConversationItemInputAudioTranscriptionDeltaEvent,
     InputAudioBufferAppendEvent,
     InputAudioBufferCommitEvent,
+    InputAudioBufferCommittedEvent,
     InputAudioBufferSpeechStartedEvent,
     InputAudioBufferSpeechStoppedEvent,
     OutputAudioBufferClearEvent,
@@ -90,6 +91,7 @@ ClientEvent = Union[
 ServerEvent = Union[
     SessionCreatedEvent,
     RealtimeErrorEvent,
+    InputAudioBufferCommittedEvent,
     InputAudioBufferSpeechStartedEvent,
     InputAudioBufferSpeechStoppedEvent,
     ConversationItemCreatedEvent,
@@ -182,6 +184,8 @@ class ConnState(BaseModel):
     speculative_user_speech_stopped_at_s: Optional[float] = None
     speculative_user_item_id: Optional[str] = None
     speculative_input_item_id: Optional[str] = None
+    input_audio_item_previous_id: Optional[str] = None
+    input_audio_item_committed: bool = False
     speculative_audio_duration_s: float = 0.0
     # Client conversation.item.create items that arrived while a response was
     # generating. Applying them mid-generation races the LLM handler's chat
@@ -301,7 +305,7 @@ class RealtimeService:
     def append_pcm(self, conn_id: str, pcm_bytes: bytes, src_rate: int) -> list[bytes]:
         return self.audio.append_pcm(conn_id, pcm_bytes, src_rate)
 
-    def handle_audio_commit(self, conn_id: str) -> RealtimeErrorEvent | None:
+    def handle_audio_commit(self, conn_id: str) -> InputAudioBufferCommittedEvent | RealtimeErrorEvent:
         return self.audio.handle_audio_commit(conn_id)
 
     def begin_audio_response(self, conn_id: str) -> tuple[str, str, list[ServerEvent]]:

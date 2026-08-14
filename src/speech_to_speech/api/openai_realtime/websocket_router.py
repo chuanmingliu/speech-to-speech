@@ -358,9 +358,8 @@ async def _dispatch_client_event(
             unit.input_queue.put((chunk, rt_cfg))
 
     elif isinstance(event, InputAudioBufferCommitEvent):
-        err = service.handle_audio_commit(session_id)
-        if err:
-            await transport.send_events([err])
+        result = service.handle_audio_commit(session_id)
+        await transport.send_events([result])
 
     elif isinstance(event, OutputAudioBufferClearEvent):
         if transport_kind != "webrtc":

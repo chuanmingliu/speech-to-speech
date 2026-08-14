@@ -26,6 +26,7 @@ from threading import Event as ThreadingEvent
 import pytest
 import uvicorn
 from openai import AsyncOpenAI
+from openai.types.realtime import InputAudioBufferCommittedEvent
 
 from speech_to_speech.api.openai_realtime.pipeline_unit import PipelineUnit
 from speech_to_speech.api.openai_realtime.service import RealtimeService
@@ -141,6 +142,7 @@ async def _recv(conn, timeout: float = 3.0):
 SESSION_CREATED = "session.created"
 SPEECH_STARTED = "input_audio_buffer.speech_started"
 SPEECH_STOPPED = "input_audio_buffer.speech_stopped"
+INPUT_AUDIO_COMMITTED = "input_audio_buffer.committed"
 TRANSCRIPTION_DELTA = "conversation.item.input_audio_transcription.delta"
 TRANSCRIPTION_COMPLETED = "conversation.item.input_audio_transcription.completed"
 ITEM_CREATED = "conversation.item.created"
@@ -218,7 +220,31 @@ class TestSDKSessionUpdate:
 
 
 # ===================================================================
-# 3. Full voice conversation turn
+# 3. Explicit input audio commit
+# ===================================================================
+
+
+class TestSDKInputAudioCommit:
+    @pytest.mark.asyncio
+    async def test_commit_returns_official_event_with_server_ids(self, server_env):
+        client = server_env.make_client()
+        async with client.realtime.connect(model="test") as conn:
+            await _recv(conn)  # session.created
+
+            await conn.input_audio_buffer.append(audio=base64.b64encode(_pcm_bytes(512)).decode("ascii"))
+            await conn.input_audio_buffer.commit(event_id="client_commit_sdk")
+
+            event = await _recv(conn)
+            assert isinstance(event, InputAudioBufferCommittedEvent)
+            assert event.type == INPUT_AUDIO_COMMITTED
+            assert event.event_id.startswith("event_")
+            assert event.event_id != "client_commit_sdk"
+            assert event.item_id.startswith("item_")
+            assert event.previous_item_id is None
+
+
+# ===================================================================
+# 4. Full voice conversation turn
 # ===================================================================
 
 

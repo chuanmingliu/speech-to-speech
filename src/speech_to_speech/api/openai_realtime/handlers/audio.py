@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from openai.types.realtime import (
     InputAudioBufferAppendEvent,
+    InputAudioBufferCommittedEvent,
     InputAudioBufferSpeechStartedEvent,
     InputAudioBufferSpeechStoppedEvent,
     RealtimeErrorEvent,
@@ -34,6 +35,7 @@ class AudioHandler(RealtimeBaseHandler):
     def _start_input_item(self, conn_id: str, *, preserve_active_response: bool = False) -> str:
         response = self._service.response
         st = self._state(conn_id)
+        previous_item_id = st.last_item_id
         if not preserve_active_response:
             item_id = response._start_item(conn_id)
         else:
@@ -43,6 +45,8 @@ class AudioHandler(RealtimeBaseHandler):
             st.current_item_id = response_item_id
             st.content_index = response_content_index
         st.input_content_index = 0
+        st.input_audio_item_previous_id = previous_item_id
+        st.input_audio_item_committed = False
         return item_id
 
     def handle_audio_append(self, conn_id: str, event: InputAudioBufferAppendEvent) -> list[bytes]:
@@ -91,7 +95,7 @@ class AudioHandler(RealtimeBaseHandler):
             st.audio_buffer_has_data = True
         return chunks
 
-    def handle_audio_commit(self, conn_id: str) -> RealtimeErrorEvent | None:
+    def handle_audio_commit(self, conn_id: str) -> InputAudioBufferCommittedEvent | RealtimeErrorEvent:
         """Commit the audio buffer. Returns an error if no audio was appended."""
         st = self._state(conn_id)
         if not st.audio_buffer_has_data:
@@ -99,9 +103,22 @@ class AudioHandler(RealtimeBaseHandler):
                 message="Input audio buffer is empty, nothing to commit.",
                 _type="input_audio_buffer_commit_empty",
             )
+
+        item_id = st.speculative_input_item_id
+        if item_id is None or st.input_audio_item_committed:
+            item_id = self._start_input_item(conn_id, preserve_active_response=st.in_response)
+            st.speculative_input_item_id = item_id
+
         st.audio_buffer_has_data = False
+        st.input_audio_item_committed = True
+        st.last_item_id = item_id
         logger.debug("Audio buffer committed")
-        return None
+        return InputAudioBufferCommittedEvent(
+            type="input_audio_buffer.committed",
+            event_id=self._next_event_id(),
+            item_id=item_id,
+            previous_item_id=st.input_audio_item_previous_id,
+        )
 
     # ── Pipeline event handlers ────────────────────
 
@@ -125,6 +142,7 @@ class AudioHandler(RealtimeBaseHandler):
             elif not preserve_active_response:
                 st.current_item_id = input_item_id
                 st.content_index = 0
+            st.input_audio_item_committed = False
             st.input_audio_duration_s = 0.0
             st.input_content_index = 0
         else:
