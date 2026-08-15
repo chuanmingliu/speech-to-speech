@@ -19,13 +19,14 @@ from starlette.websockets import WebSocketState
 import speech_to_speech.api.openai_realtime.websocket_router as router_module
 from speech_to_speech.api.openai_realtime.pipeline_unit import PipelineUnit
 from speech_to_speech.api.openai_realtime.service import CHUNK_SIZE_BYTES, RealtimeService
-from speech_to_speech.api.openai_realtime.transports import WebSocketTransport
+from speech_to_speech.api.openai_realtime.transports import TransportError, WebSocketTransport
 from speech_to_speech.api.openai_realtime.websocket_router import create_app
 from speech_to_speech.pipeline.cancel_scope import CancelScope
 from speech_to_speech.pipeline.control import SESSION_END, PipelineControlMessage, is_control_message
 from speech_to_speech.pipeline.events import (
     AssistantTextEvent,
     SpeechStartedEvent,
+    SpeechStoppedEvent,
     TokenUsageEvent,
     TranscriptionCompletedEvent,
 )
@@ -132,6 +133,71 @@ class _FakeWebSocket:
         self.sent.append(payload)
 
 
+class _GatedCommitTransport:
+    """A real async boundary: committed is not delivered until the test releases it."""
+
+    kind = "websocket"
+
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+        self.commit_send_started = asyncio.Event()
+        self.allow_commit_send = asyncio.Event()
+
+    async def send_events(self, events) -> None:
+        if any(event.type == "input_audio_buffer.committed" for event in events):
+            self.commit_send_started.set()
+            await self.allow_commit_send.wait()
+        self.sent.extend(event.model_dump() for event in events)
+
+    async def send_audio_chunk(self, service, session_id: str, pcm: bytes) -> None:
+        await self.send_events(service.encode_audio_chunk(session_id, pcm))
+
+    def discard_pending_audio(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
+class _FailingTranscriptTransport:
+    """Accept the commit fence, then fail while flushing its staged transcript."""
+
+    kind = "websocket"
+
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    async def send_events(self, events) -> None:
+        if any("transcription" in event.type for event in events):
+            raise ConnectionError("transport failed")
+        self.sent.extend(event.model_dump() for event in events)
+
+    async def send_audio_chunk(self, service, session_id: str, pcm: bytes) -> None:
+        await self.send_events(service.encode_audio_chunk(session_id, pcm))
+
+    def discard_pending_audio(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
+class _UnexpectedFailureTransport:
+    kind = "websocket"
+
+    async def send_events(self, events) -> None:
+        raise ValueError("unexpected event transport failure")
+
+    async def send_audio_chunk(self, service, session_id: str, pcm: bytes) -> None:
+        raise ValueError("unexpected audio transport failure")
+
+    def discard_pending_audio(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
 # ===================================================================
 # Connection
 # ===================================================================
@@ -158,6 +224,20 @@ class TestConnection:
                     # Rejection uses the stateless build_error_event helper —
                     # the error type identifies pool exhaustion specifically.
                     assert msg["error"]["type"] == "session_limit_reached"
+
+    @pytest.mark.asyncio
+    async def test_closed_websocket_send_reports_transport_failure(self, setup):
+        class _ClosedWebSocket:
+            application_state = WebSocketState.DISCONNECTED
+
+        _, service, *_ = setup
+        conn_id = service.register()
+        try:
+            transport = WebSocketTransport(_ClosedWebSocket())  # type: ignore[arg-type]
+            with pytest.raises(ConnectionError):
+                await transport.send_events([service.build_session_created(conn_id)])
+        finally:
+            service.unregister(conn_id)
 
 
 # ===================================================================
@@ -186,67 +266,250 @@ class TestClientEventDispatch:
                 assert len(chunk) == CHUNK_SIZE_BYTES
 
     @pytest.mark.asyncio
-    async def test_audio_commit_ack_is_sent_before_return_and_later_transcript(self, setup):
+    async def test_same_item_transcript_waits_for_commit_transport_send(self, setup):
+        """A concurrent pipeline transcript cannot overtake a blocked commit send."""
         _, service, _, _, _, _, _, _, _ = setup
         unit = setup[0].state.test_unit
         conn_id = service.register()
-        websocket = _FakeWebSocket()
-        transport = WebSocketTransport(websocket)  # type: ignore[arg-type]
-        audio_b64 = base64.b64encode(_pcm_bytes(512)).decode("ascii")
+        transport = _GatedCommitTransport()
+
+        try:
+            service.dispatch_pipeline_event(
+                conn_id,
+                SpeechStartedEvent(turn_id="turn-gated", turn_revision=0),
+            )
+            commit_task = asyncio.create_task(
+                router_module._construct_and_send(
+                    unit,
+                    conn_id,
+                    transport,  # type: ignore[arg-type]
+                    lambda: service.dispatch_pipeline_event(
+                        conn_id,
+                        SpeechStoppedEvent(turn_id="turn-gated", turn_revision=0),
+                    ),
+                )
+            )
+            await transport.commit_send_started.wait()
+
+            transcript = service.dispatch_pipeline_event(
+                conn_id,
+                TranscriptionCompletedEvent(
+                    transcript="must wait",
+                    turn_id="turn-gated",
+                    turn_revision=0,
+                ),
+            )
+            assert transcript == []
+            assert transport.sent == []
+            transport.allow_commit_send.set()
+            await commit_task
+
+            assert [event["type"] for event in transport.sent] == [
+                "input_audio_buffer.speech_stopped",
+                "input_audio_buffer.committed",
+                "conversation.item.input_audio_transcription.completed",
+            ]
+            assert transport.sent[0]["item_id"] == transport.sent[1]["item_id"]
+            assert transport.sent[1]["item_id"] == transport.sent[2]["item_id"]
+        finally:
+            service.unregister(conn_id)
+
+    @pytest.mark.asyncio
+    async def test_client_item_cannot_overtake_commit_transport_send(self, setup):
+        """Client-route construction and delivery share the commit's outbound boundary."""
+        _, service, *_ = setup
+        unit = setup[0].state.test_unit
+        conn_id = service.register()
+        transport = _GatedCommitTransport()
+
+        try:
+            service.dispatch_pipeline_event(
+                conn_id,
+                SpeechStartedEvent(turn_id="turn-gated-client", turn_revision=0),
+            )
+            commit_task = asyncio.create_task(
+                router_module._construct_and_send(
+                    unit,
+                    conn_id,
+                    transport,  # type: ignore[arg-type]
+                    lambda: service.dispatch_pipeline_event(
+                        conn_id,
+                        SpeechStoppedEvent(turn_id="turn-gated-client", turn_revision=0),
+                    ),
+                )
+            )
+            await transport.commit_send_started.wait()
+
+            client_task = asyncio.create_task(
+                router_module._dispatch_client_event(
+                    unit,
+                    conn_id,
+                    {
+                        "type": "conversation.item.create",
+                        "item": {
+                            "type": "message",
+                            "role": "user",
+                            "content": [{"type": "input_text", "text": "after commit"}],
+                        },
+                    },
+                    transport,  # type: ignore[arg-type]
+                )
+            )
+            await asyncio.sleep(0)
+
+            assert not client_task.done()
+            assert transport.sent == []
+            transport.allow_commit_send.set()
+            await asyncio.gather(commit_task, client_task)
+
+            assert [event["type"] for event in transport.sent] == [
+                "input_audio_buffer.speech_stopped",
+                "input_audio_buffer.committed",
+                "conversation.item.created",
+            ]
+        finally:
+            service.unregister(conn_id)
+
+    @pytest.mark.asyncio
+    async def test_failed_staged_flush_keeps_events_and_fence_closed(self, setup):
+        _, service, *_ = setup
+        unit = setup[0].state.test_unit
+        conn_id = service.register()
+        transport = _FailingTranscriptTransport()
+
+        try:
+            [started] = service.dispatch_pipeline_event(
+                conn_id,
+                SpeechStartedEvent(turn_id="turn-fail", turn_revision=0),
+            )
+            assert (
+                service.dispatch_pipeline_event(
+                    conn_id,
+                    TranscriptionCompletedEvent(
+                        transcript="must survive",
+                        turn_id="turn-fail",
+                        turn_revision=0,
+                    ),
+                )
+                == []
+            )
+            with pytest.raises(ConnectionError):
+                await router_module._construct_and_send(
+                    unit,
+                    conn_id,
+                    transport,  # type: ignore[arg-type]
+                    lambda: service.dispatch_pipeline_event(
+                        conn_id,
+                        SpeechStoppedEvent(turn_id="turn-fail", turn_revision=0),
+                    ),
+                )
+
+            record = service._state(conn_id).input_items[started.item_id]
+            assert not record.commit_ready.is_set()
+            assert len(record.staged_events) == 1
+        finally:
+            service.unregister(conn_id)
+
+    @pytest.mark.asyncio
+    async def test_commit_send_timeout_keeps_staged_events_and_fence_closed(self, setup, monkeypatch):
+        _, service, *_ = setup
+        unit = setup[0].state.test_unit
+        conn_id = service.register()
+        transport = _GatedCommitTransport()
+        monkeypatch.setattr(router_module, "TRANSPORT_SEND_TIMEOUT_S", 0.01)
+
+        try:
+            [started] = service.dispatch_pipeline_event(
+                conn_id,
+                SpeechStartedEvent(turn_id="turn-timeout", turn_revision=0),
+            )
+            service.dispatch_pipeline_event(
+                conn_id,
+                TranscriptionCompletedEvent(
+                    transcript="must survive timeout",
+                    turn_id="turn-timeout",
+                    turn_revision=0,
+                ),
+            )
+            with pytest.raises(ConnectionError):
+                await router_module._construct_and_send(
+                    unit,
+                    conn_id,
+                    transport,  # type: ignore[arg-type]
+                    lambda: service.dispatch_pipeline_event(
+                        conn_id,
+                        SpeechStoppedEvent(turn_id="turn-timeout", turn_revision=0),
+                    ),
+                )
+
+            record = service._state(conn_id).input_items[started.item_id]
+            assert not record.commit_ready.is_set()
+            assert len(record.staged_events) == 1
+        finally:
+            service.unregister(conn_id)
+
+    @pytest.mark.asyncio
+    async def test_common_send_boundaries_normalize_unexpected_transport_failures(self, setup):
+        _, service, *_ = setup
+        unit = setup[0].state.test_unit
+        conn_id = service.register()
+        transport = _UnexpectedFailureTransport()
+
+        try:
+            with pytest.raises(TransportError):
+                await router_module._deliver_events(
+                    transport,  # type: ignore[arg-type]
+                    [service.build_session_created(conn_id)],
+                )
+            with pytest.raises(TransportError):
+                await router_module._send_audio_chunk(
+                    unit,
+                    conn_id,
+                    transport,  # type: ignore[arg-type]
+                    _pcm_bytes(32),
+                    cancel_generation=None,
+                )
+        finally:
+            service.unregister(conn_id)
+
+    @pytest.mark.asyncio
+    async def test_session_update_success_emits_effective_session_updated(self, setup):
+        _, service, *_ = setup
+        unit = setup[0].state.test_unit
+        conn_id = service.register()
+        transport = _GatedCommitTransport()
 
         try:
             await router_module._dispatch_client_event(
                 unit,
                 conn_id,
-                {"type": "input_audio_buffer.append", "audio": audio_b64},
-                transport,
-            )
-            await router_module._dispatch_client_event(
-                unit,
-                conn_id,
-                {"type": "input_audio_buffer.commit", "event_id": "client_commit_1"},
-                transport,
-            )
-
-            assert len(websocket.sent) == 1
-            first = websocket.sent[0]
-            assert first["type"] == "input_audio_buffer.committed"
-            assert first["event_id"].startswith("event_")
-            assert first["event_id"] != "client_commit_1"
-            assert first["previous_item_id"] is None
-
-            await router_module._dispatch_client_event(
-                unit,
-                conn_id,
-                {"type": "input_audio_buffer.append", "audio": audio_b64},
-                transport,
-            )
-            await router_module._dispatch_client_event(
-                unit,
-                conn_id,
-                {"type": "input_audio_buffer.commit", "event_id": "client_commit_2"},
-                transport,
+                {
+                    "type": "session.update",
+                    "session": {
+                        "type": "realtime",
+                        "audio": {
+                            "input": {
+                                "turn_detection": {
+                                    "type": "server_vad",
+                                    "threshold": 0.7,
+                                }
+                            }
+                        },
+                    },
+                },
+                transport,  # type: ignore[arg-type]
             )
 
-            assert len(websocket.sent) == 2
-            second = websocket.sent[1]
-            assert second["type"] == "input_audio_buffer.committed"
-            assert second["event_id"] != "client_commit_2"
-            assert second["item_id"] != first["item_id"]
-            assert second["previous_item_id"] == first["item_id"]
-
-            transcript = service.dispatch_pipeline_event(
-                conn_id,
-                TranscriptionCompletedEvent(transcript="later transcript"),
-            )
-            await transport.send_events(transcript)
-
-            assert [event["type"] for event in websocket.sent] == [
-                "input_audio_buffer.committed",
-                "input_audio_buffer.committed",
-                "conversation.item.input_audio_transcription.completed",
-            ]
-            assert websocket.sent[2]["item_id"] == second["item_id"]
+            assert [event["type"] for event in transport.sent] == ["session.updated"]
+            effective_vad = transport.sent[0]["session"]["audio"]["input"]["turn_detection"]
+            assert effective_vad["type"] == "server_vad"
+            assert effective_vad["threshold"] == 0.7
+            # Unspecified SDK fields stay unspecified; session.updated reports
+            # the actual merged config rather than inventing provider defaults.
+            assert effective_vad["silence_duration_ms"] is None
+            assert effective_vad["interrupt_response"] is None
+            effective = service._state(conn_id).runtime_config.session.audio.input.turn_detection
+            assert type(effective).__name__ == "ServerVad"
         finally:
             service.unregister(conn_id)
 
@@ -386,6 +649,37 @@ class TestClientEventDispatch:
 
 
 class TestSendLoop:
+    def test_transport_send_failure_starts_fail_closed_release(self, setup, monkeypatch):
+        app, service, input_queue, output_queue, text_output_queue, *_ = setup
+        original_send = WebSocketTransport.send_events
+
+        async def fail_after_session_created(self, events):
+            if any(event.type == "session.created" for event in events):
+                await original_send(self, events)
+                return
+            raise ConnectionError("forced send failure")
+
+        monkeypatch.setattr(WebSocketTransport, "send_events", fail_after_session_created)
+        with TestClient(app) as client:
+            with client.websocket_connect("/v1/realtime") as ws:
+                assert ws.receive_json()["type"] == "session.created"
+                text_output_queue.put(SpeechStartedEvent())
+
+                deadline = time.monotonic() + 1.0
+                while time.monotonic() < deadline:
+                    session = app.state.test_unit.session
+                    if session is not None and session.released_at is not None:
+                        break
+                    time.sleep(0.01)
+                else:
+                    raise AssertionError("transport failure did not start session release")
+
+            _simulate_session_end_drain(input_queue, output_queue)
+            deadline = time.monotonic() + 1.0
+            while service.connection_ids and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert service.connection_ids == []
+
     def test_audio_output_does_not_run_more_than_two_200ms_batches_ahead(self, setup, monkeypatch):
         app, _, _, output_queue, *_ = setup
         now = [10.0]

@@ -208,7 +208,9 @@ class TestSDKSessionUpdate:
                     },
                 }
             )
-            await asyncio.sleep(0.2)
+            updated = await _recv(conn)
+            assert updated.type == "session.updated"
+            assert updated.session.audio.input.turn_detection.type == "server_vad"
 
             cid = server_env.service.connection_ids[0]
             s = server_env.service._state(cid).runtime_config.session
@@ -226,7 +228,7 @@ class TestSDKSessionUpdate:
 
 class TestSDKInputAudioCommit:
     @pytest.mark.asyncio
-    async def test_commit_returns_official_event_with_server_ids(self, server_env):
+    async def test_provider_vad_rejects_explicit_client_commit(self, server_env):
         client = server_env.make_client()
         async with client.realtime.connect(model="test") as conn:
             await _recv(conn)  # session.created
@@ -235,12 +237,8 @@ class TestSDKInputAudioCommit:
             await conn.input_audio_buffer.commit(event_id="client_commit_sdk")
 
             event = await _recv(conn)
-            assert isinstance(event, InputAudioBufferCommittedEvent)
-            assert event.type == INPUT_AUDIO_COMMITTED
-            assert event.event_id.startswith("event_")
-            assert event.event_id != "client_commit_sdk"
-            assert event.item_id.startswith("item_")
-            assert event.previous_item_id is None
+            assert event.type == "error"
+            assert event.error.type == "input_audio_buffer_commit_not_allowed"
 
 
 # ===================================================================
@@ -253,7 +251,7 @@ class TestSDKVoiceTurn:
     async def test_full_voice_turn(self, server_env):
         """
         Pipeline-driven voice turn through the real SDK:
-          speech_started → partial transcription → speech_stopped →
+          speech_started → speech_stopped → committed → staged partial →
           transcription_completed → audio response → transcript → done
         """
         client = server_env.make_client()
@@ -268,15 +266,20 @@ class TestSDKVoiceTurn:
             item_id = event.item_id
 
             server_env.text_output_queue.put(PartialTranscriptionEvent(delta="hel"))
-            event = await _recv(conn)
-            assert event.type == TRANSCRIPTION_DELTA
-            assert event.delta == "hel"
-            assert event.item_id == item_id
-
             server_env.text_output_queue.put(SpeechStoppedEvent(duration_s=1.9))
             event = await _recv(conn)
             assert event.type == SPEECH_STOPPED
             assert event.audio_end_ms == 0
+            assert event.item_id == item_id
+
+            event = await _recv(conn)
+            assert isinstance(event, InputAudioBufferCommittedEvent)
+            assert event.type == INPUT_AUDIO_COMMITTED
+            assert event.item_id == item_id
+
+            event = await _recv(conn)
+            assert event.type == TRANSCRIPTION_DELTA
+            assert event.delta == "hel"
             assert event.item_id == item_id
 
             server_env.text_output_queue.put(TranscriptionCompletedEvent(transcript="hello"))
@@ -397,6 +400,8 @@ class TestSDKPhantomSpeech:
             server_env.text_output_queue.put(SpeechStoppedEvent())
             event = await _recv(conn)
             assert event.type == SPEECH_STOPPED
+            event = await _recv(conn)
+            assert event.type == INPUT_AUDIO_COMMITTED
 
             server_env.text_output_queue.put(SpeechStartedEvent())
             event = await _recv(conn)
@@ -405,6 +410,8 @@ class TestSDKPhantomSpeech:
             server_env.text_output_queue.put(SpeechStoppedEvent(duration_s=2.0))
             event = await _recv(conn)
             assert event.type == SPEECH_STOPPED
+            event = await _recv(conn)
+            assert event.type == INPUT_AUDIO_COMMITTED
 
             server_env.output_queue.put(_pcm_bytes(256))
             event = await _recv(conn)
@@ -660,7 +667,8 @@ class TestSDKMultiTurn:
             await _recv(conn)
 
             server_env.text_output_queue.put(SpeechStoppedEvent())
-            await _recv(conn)
+            assert (await _recv(conn)).type == SPEECH_STOPPED
+            assert (await _recv(conn)).type == INPUT_AUDIO_COMMITTED
 
             server_env.text_output_queue.put(TranscriptionCompletedEvent(transcript="hi"))
             await _recv(conn)
@@ -684,7 +692,8 @@ class TestSDKMultiTurn:
 
             # Turn 2
             server_env.text_output_queue.put(SpeechStoppedEvent())
-            await _recv(conn)
+            assert (await _recv(conn)).type == SPEECH_STOPPED
+            assert (await _recv(conn)).type == INPUT_AUDIO_COMMITTED
 
             server_env.text_output_queue.put(TranscriptionCompletedEvent(transcript="bye"))
             await _recv(conn)

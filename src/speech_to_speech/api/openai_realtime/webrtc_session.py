@@ -28,7 +28,7 @@ from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSession
 from aiortc.mediastreams import MediaStreamError, MediaStreamTrack
 
 from speech_to_speech.api.openai_realtime.service import PIPELINE_SAMPLE_RATE
-from speech_to_speech.api.openai_realtime.transports import SessionTransport
+from speech_to_speech.api.openai_realtime.transports import SessionTransport, TransportError
 
 if TYPE_CHECKING:
     from speech_to_speech.api.openai_realtime.service import RealtimeService, ServerEvent
@@ -45,6 +45,7 @@ ICE_GATHERING_TIMEOUT_S = 5.0
 # "connected" before we release its pipeline unit. Without this, a client that
 # receives the SDP answer and never completes ICE would hold the unit forever.
 CONNECT_TIMEOUT_S = 30.0
+PEER_CLOSE_TIMEOUT_S = 2.0
 
 
 def rtc_configuration_from_env() -> Optional[RTCConfiguration]:
@@ -278,11 +279,16 @@ class WebRTCSession(SessionTransport):
             if task is not current:
                 task.cancel()
         self._track.stop()
+        # Release the pipeline claim before touching peer teardown: aiortc may
+        # block while closing a broken peer, and cancellation must not strand
+        # the unit after ``_closed`` has made later close attempts no-ops.
+        self._on_closed()
         try:
-            await self._pc.close()
+            await asyncio.wait_for(self._pc.close(), timeout=PEER_CLOSE_TIMEOUT_S)
+        except TimeoutError:
+            logger.warning("[WebRTC] Timed out closing peer connection")
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[WebRTC] Error closing peer connection: {e}")
-        self._on_closed()
         logger.info("[WebRTC] Session closed")
 
     # ── SessionTransport interface ────────────────
@@ -290,19 +296,18 @@ class WebRTCSession(SessionTransport):
     async def send_events(self, events: list[ServerEvent]) -> None:
         dc = self._dc
         if dc is None or dc.readyState != "open":
-            return
+            raise TransportError("WebRTC data channel is not open")
         for event in events:
             try:
                 dc.send(json.dumps(event.model_dump()))
-            except Exception as e:  # noqa: BLE001
-                logger.error(f"[WebRTC] Data channel send error: {e}")
+            except Exception as exc:  # noqa: BLE001
+                raise TransportError(f"WebRTC data channel send failed ({type(exc).__name__})") from exc
 
     async def send_audio_chunk(self, service: RealtimeService, session_id: str, pcm: bytes) -> None:
         # Bookkeeping events (response.created on the implicit VAD path) go
         # over the data channel; the audio itself goes on the media track.
         _resp_id, _item_id, events = service.begin_audio_response(session_id)
-        if events:
-            await self.send_events(events)
+        await self.send_events(events)
         self._track.write(self._out_resampler.resample_pcm(pcm, PIPELINE_SAMPLE_RATE))
 
     def discard_pending_audio(self) -> None:
@@ -329,13 +334,17 @@ class WebRTCSession(SessionTransport):
             try:
                 raw = json.loads(msg)
             except json.JSONDecodeError:
-                logger.error(f"[WebRTC] Invalid JSON on data channel: {msg!r}")
+                logger.warning("[WebRTC] Invalid JSON on data channel (%d bytes)", len(msg.encode("utf-8")))
                 continue
             if not isinstance(raw, dict):
-                logger.error(f"[WebRTC] Non-object event on data channel: {msg!r}")
+                logger.warning("[WebRTC] Ignoring non-object event on data channel (%s)", type(raw).__name__)
                 continue
             try:
                 await self._on_client_event(raw)
+            except TransportError:
+                logger.warning("[WebRTC] Client-event response delivery failed; closing session")
+                await self.close()
+                break
             except Exception:  # noqa: BLE001
                 logger.exception("[WebRTC] Error handling client event")
 

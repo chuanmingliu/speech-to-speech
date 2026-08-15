@@ -2,6 +2,7 @@ from openai.types.realtime import RealtimeSessionCreateRequest
 from openai.types.realtime.realtime_audio_config import RealtimeAudioConfig
 from openai.types.realtime.realtime_audio_config_input import RealtimeAudioConfigInput
 from openai.types.realtime.realtime_audio_config_output import RealtimeAudioConfigOutput
+from openai.types.realtime.realtime_audio_input_turn_detection import ServerVad
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from speech_to_speech.LLM.chat import Chat
@@ -18,7 +19,7 @@ def _apply_update(current: BaseModel, update: BaseModel) -> None:
     for field_name in update.model_fields_set:
         new_val = getattr(update, field_name)
         old_val = getattr(current, field_name, None)
-        if isinstance(new_val, BaseModel) and isinstance(old_val, BaseModel):
+        if isinstance(new_val, BaseModel) and isinstance(old_val, BaseModel) and type(new_val) is type(old_val):
             _apply_update(old_val, new_val)
         else:
             setattr(current, field_name, new_val)
@@ -51,6 +52,11 @@ class RuntimeConfig(BaseModel):
             v.audio = RealtimeAudioConfig()
         if v.audio.input is None:
             v.audio.input = RealtimeAudioConfigInput()
+        if v.audio.input.turn_detection is None and "turn_detection" not in v.audio.input.model_fields_set:
+            # The local pipeline is VAD-driven by default.  Advertising an
+            # implicit null here would claim manual commit semantics while
+            # still feeding audio to VAD, so make the effective default explicit.
+            v.audio.input.turn_detection = ServerVad(type="server_vad")
         if v.audio.output is None:
             v.audio.output = RealtimeAudioConfigOutput()
         return v

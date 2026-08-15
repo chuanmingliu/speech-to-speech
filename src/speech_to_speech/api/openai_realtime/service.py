@@ -1,4 +1,6 @@
 import logging
+from asyncio import Event as AsyncEvent
+from asyncio import Lock as AsyncLock
 from collections.abc import Mapping
 from queue import Queue
 from threading import Event as ThreadingEvent
@@ -29,6 +31,7 @@ from openai.types.realtime import (
     ResponseTextDeltaEvent,
     ResponseTextDoneEvent,
     SessionCreatedEvent,
+    SessionUpdatedEvent,
     SessionUpdateEvent,
 )
 from openai.types.realtime.realtime_response_create_params import RealtimeResponseCreateParams
@@ -64,6 +67,10 @@ PIPELINE_SAMPLE_RATE = 16000
 CHUNK_SAMPLES = 512
 BYTES_PER_SAMPLE = 2
 CHUNK_SIZE_BYTES = CHUNK_SAMPLES * BYTES_PER_SAMPLE
+MAX_STAGED_INPUT_TRANSCRIPT_EVENTS = 64
+MAX_STAGED_INPUT_TRANSCRIPT_BYTES = 256 * 1024
+MAX_INPUT_ITEM_TOMBSTONES = 64
+MAX_EXPIRED_INPUT_TURN_TOMBSTONES = 64
 
 _ResponseStatus = Literal["completed", "cancelled", "failed", "incomplete", "in_progress"]
 _StatusReason = Literal["turn_detected", "client_cancelled", "max_output_tokens", "content_filter"]
@@ -90,6 +97,7 @@ ClientEvent = Union[
 
 ServerEvent = Union[
     SessionCreatedEvent,
+    SessionUpdatedEvent,
     RealtimeErrorEvent,
     InputAudioBufferCommittedEvent,
     InputAudioBufferSpeechStartedEvent,
@@ -155,6 +163,26 @@ class GlobalUsageMetrics(UsageMetrics):
         return sum(self.errors_by_type.values())
 
 
+class InputAudioItemState(BaseModel):
+    """History identity, transcript state, and transport fence for one input item."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    item_id: str
+    previous_item_id: str | None
+    predecessor_tail_version: int
+    tail_version: int | None = None
+    turn_id: str | None = None
+    turn_revision: int | None = None
+    committed: bool = False
+    commit_ready: AsyncEvent = Field(default_factory=AsyncEvent)
+    flushing_commit: bool = False
+    staged_events: list[PipelineEvent] = Field(default_factory=list)
+    staged_bytes: int = 0
+    partial_hypothesis: str = ""
+    partial_rewrite_suppressed: bool = False
+
+
 class ConnState(BaseModel):
     """Per-connection mutable state, including all protocol-level IDs."""
 
@@ -167,11 +195,16 @@ class ConnState(BaseModel):
     response_pending: bool = False
     audio_buffer_has_data: bool = False
     audio_remainder: bytes = b""
+    conversation_tail_version: int = 0
+    input_items: dict[str, InputAudioItemState] = Field(default_factory=dict)
+    input_item_by_turn: dict[tuple[str | None, int | None], str] = Field(default_factory=dict)
+    expired_input_turns: dict[tuple[str | None, int | None], None] = Field(default_factory=dict)
+    outbound_lock: AsyncLock = Field(default_factory=AsyncLock)
     output_audio_resampler: StreamingPCMResampler | None = None
     current_response_id: Optional[str] = None
     current_item_id: Optional[str] = None
+    current_item_published: bool = False
     content_index: int = 0
-    input_content_index: int = 0
     input_audio_duration_s: float = 0.0
     last_item_id: Optional[str] = None
     current_response_params: RealtimeResponseCreateParams | None = None
@@ -184,8 +217,6 @@ class ConnState(BaseModel):
     speculative_user_speech_stopped_at_s: Optional[float] = None
     speculative_user_item_id: Optional[str] = None
     speculative_input_item_id: Optional[str] = None
-    input_audio_item_previous_id: Optional[str] = None
-    input_audio_item_committed: bool = False
     speculative_audio_duration_s: float = 0.0
     # Client conversation.item.create items that arrived while a response was
     # generating. Applying them mid-generation races the LLM handler's chat
@@ -269,6 +300,180 @@ class RealtimeService:
     def connection_ids(self) -> list[str]:
         return list(self._conns)
 
+    # ── Input-item identity / transport fence ──────
+
+    def advance_conversation_tail(self, conn_id: str, item_id: str | None) -> int:
+        """Advance the append-only conversation tail and return its epoch.
+
+        The epoch changes even if a previously-used ID reappears after another
+        item (ABA), so speculative reuse cannot mistake string equality for
+        history identity.
+        """
+        st = self._state(conn_id)
+        if item_id is None:
+            return st.conversation_tail_version
+        st.conversation_tail_version += 1
+        st.last_item_id = item_id
+        return st.conversation_tail_version
+
+    def register_input_item(
+        self,
+        conn_id: str,
+        *,
+        item_id: str,
+        previous_item_id: str | None,
+        predecessor_tail_version: int,
+        turn_id: str | None,
+        turn_revision: int | None,
+        supersedes_item_id: str | None = None,
+    ) -> InputAudioItemState:
+        st = self._state(conn_id)
+        record = InputAudioItemState(
+            item_id=item_id,
+            previous_item_id=previous_item_id,
+            predecessor_tail_version=predecessor_tail_version,
+            turn_id=turn_id,
+            turn_revision=turn_revision,
+        )
+        if supersedes_item_id is not None:
+            superseded = st.input_items.get(supersedes_item_id)
+            if superseded is not None and not superseded.committed:
+                record.staged_events = superseded.staged_events
+                record.staged_bytes = superseded.staged_bytes
+                superseded.staged_events = []
+                superseded.staged_bytes = 0
+                self._remove_input_record(st, superseded.item_id)
+        st.input_items[item_id] = record
+        self.bind_input_turn(conn_id, record, turn_id, turn_revision)
+        st.speculative_input_item_id = item_id
+        self._prune_input_items(st)
+        return record
+
+    def bind_input_turn(
+        self,
+        conn_id: str,
+        record: InputAudioItemState,
+        turn_id: str | None,
+        turn_revision: int | None,
+    ) -> None:
+        st = self._state(conn_id)
+        turn_key = (turn_id, turn_revision)
+        for key, item_id in list(st.input_item_by_turn.items()):
+            if item_id == record.item_id and key != turn_key:
+                del st.input_item_by_turn[key]
+                self._expire_input_turn(st, key)
+        record.turn_id = turn_id
+        record.turn_revision = turn_revision
+        st.expired_input_turns.pop(turn_key, None)
+        st.input_item_by_turn[turn_key] = record.item_id
+
+    def input_record_for_event(self, conn_id: str, event: PipelineEvent) -> InputAudioItemState | None:
+        st = self._state(conn_id)
+        turn_id = getattr(event, "turn_id", None)
+        turn_revision = getattr(event, "turn_revision", None)
+        item_id = st.input_item_by_turn.get((turn_id, turn_revision))
+        if item_id is None and turn_id is None and turn_revision is None:
+            item_id = st.speculative_input_item_id
+        return st.input_items.get(item_id) if item_id is not None else None
+
+    def input_item_id_for_event(self, conn_id: str, event: PipelineEvent) -> str:
+        record = self.input_record_for_event(conn_id, event)
+        if record is not None:
+            return record.item_id
+        return self.response._current_item_id(conn_id)
+
+    def input_turn_expired(self, conn_id: str, event: PipelineEvent) -> bool:
+        turn_id = getattr(event, "turn_id", None)
+        turn_revision = getattr(event, "turn_revision", None)
+        if turn_id is None and turn_revision is None:
+            return False
+        return (turn_id, turn_revision) in self._state(conn_id).expired_input_turns
+
+    def can_reuse_input_item(self, conn_id: str, record: InputAudioItemState | None) -> bool:
+        return record is not None and not record.committed
+
+    def begin_input_commit_flush(self, conn_id: str, item_id: str) -> None:
+        record = self._state(conn_id).input_items.get(item_id)
+        if record is not None:
+            record.flushing_commit = True
+
+    def drain_staged_input_events(self, conn_id: str, item_id: str) -> list[ServerEvent]:
+        events, count = self.render_staged_input_events(conn_id, item_id)
+        self.ack_staged_input_events(conn_id, item_id, count)
+        return events
+
+    def render_staged_input_events(self, conn_id: str, item_id: str) -> tuple[list[ServerEvent], int]:
+        """Render a stable prefix without dropping it until transport delivery succeeds."""
+        record = self._state(conn_id).input_items.get(item_id)
+        if record is None or not record.staged_events:
+            return [], 0
+        staged = list(record.staged_events)
+        events: list[ServerEvent] = []
+        for pipeline_event in staged:
+            dispatched = self._dispatch_pipeline_event(
+                conn_id,
+                pipeline_event,
+                wait_for_pending_reopen=True,
+                bypass_input_fence_item_id=item_id,
+            )
+            if dispatched:
+                events.extend(dispatched)
+        return events, len(staged)
+
+    def ack_staged_input_events(self, conn_id: str, item_id: str, count: int) -> None:
+        record = self._state(conn_id).input_items.get(item_id)
+        if record is None or count <= 0:
+            return
+        del record.staged_events[:count]
+        record.staged_bytes = sum(self._staged_event_bytes(event) for event in record.staged_events)
+
+    def finish_input_commit_flush(self, conn_id: str, item_id: str) -> None:
+        record = self._state(conn_id).input_items.get(item_id)
+        if record is None:
+            return
+        record.flushing_commit = False
+        record.commit_ready.set()
+        self._prune_input_items(self._state(conn_id))
+
+    @staticmethod
+    def _staged_event_bytes(event: PipelineEvent) -> int:
+        text = getattr(event, "delta", None)
+        if text is None:
+            text = getattr(event, "transcript", "")
+        return len(str(text).encode("utf-8"))
+
+    @staticmethod
+    def _expire_input_turn(st: ConnState, key: tuple[str | None, int | None]) -> None:
+        if key == (None, None):
+            return
+        st.expired_input_turns.pop(key, None)
+        st.expired_input_turns[key] = None
+        while len(st.expired_input_turns) > MAX_EXPIRED_INPUT_TURN_TOMBSTONES:
+            del st.expired_input_turns[next(iter(st.expired_input_turns))]
+
+    @classmethod
+    def _remove_input_record(cls, st: ConnState, item_id: str) -> None:
+        st.input_items.pop(item_id, None)
+        for key, mapped_item_id in list(st.input_item_by_turn.items()):
+            if mapped_item_id == item_id:
+                del st.input_item_by_turn[key]
+                cls._expire_input_turn(st, key)
+
+    def _prune_input_items(self, st: ConnState) -> None:
+        """Keep live/commit-pending items plus a bounded delivered tombstone tail."""
+        current = st.speculative_input_item_id
+        for item_id, record in list(st.input_items.items()):
+            if not record.committed and not record.flushing_commit and item_id != current:
+                self._remove_input_record(st, item_id)
+
+        tombstones = [
+            item_id
+            for item_id, record in st.input_items.items()
+            if record.committed and record.commit_ready.is_set() and not record.flushing_commit
+        ]
+        for item_id in tombstones[:-MAX_INPUT_ITEM_TOMBSTONES]:
+            self._remove_input_record(st, item_id)
+
     # ── Client event parsing ─────────────────────
 
     @staticmethod
@@ -283,12 +488,12 @@ class RealtimeService:
             return None
         model_cls = _EVENT_TYPE_TO_MODEL.get(event_type)
         if model_cls is None:
-            logger.warning(f"Unknown client event type: {event_type}")
+            logger.warning("Unknown client event type (%d characters)", len(event_type))
             return None
         try:
             return model_cls.model_validate(raw)  # type: ignore[return-value]
         except ValidationError as e:
-            logger.error(f"Invalid {event_type} payload: {e}")
+            logger.warning("Invalid %s payload (%d validation error(s))", event_type, e.error_count())
             return None
 
     # ── Client event handlers ────────────────────
@@ -296,7 +501,11 @@ class RealtimeService:
     def build_session_created(self, conn_id: str) -> SessionCreatedEvent:
         return self.session.build_session_created(conn_id)
 
-    def handle_session_update(self, conn_id: str, event: SessionUpdateEvent) -> Optional[RealtimeErrorEvent]:
+    def handle_session_update(
+        self,
+        conn_id: str,
+        event: SessionUpdateEvent,
+    ) -> SessionUpdatedEvent | RealtimeErrorEvent | None:
         return self.session.handle_session_update(conn_id, event)
 
     def handle_audio_append(self, conn_id: str, event: InputAudioBufferAppendEvent) -> list[bytes]:
@@ -305,7 +514,7 @@ class RealtimeService:
     def append_pcm(self, conn_id: str, pcm_bytes: bytes, src_rate: int) -> list[bytes]:
         return self.audio.append_pcm(conn_id, pcm_bytes, src_rate)
 
-    def handle_audio_commit(self, conn_id: str) -> InputAudioBufferCommittedEvent | RealtimeErrorEvent:
+    def handle_audio_commit(self, conn_id: str) -> RealtimeErrorEvent:
         return self.audio.handle_audio_commit(conn_id)
 
     def begin_audio_response(self, conn_id: str) -> tuple[str, str, list[ServerEvent]]:
@@ -358,6 +567,7 @@ class RealtimeService:
         event: PipelineEvent,
         *,
         wait_for_pending_reopen: bool,
+        bypass_input_fence_item_id: str | None = None,
     ) -> list[ServerEvent] | None:
         is_stale = self._is_stale_turn_event(event, wait_for_pending_reopen=wait_for_pending_reopen)
         if is_stale is None:
@@ -370,6 +580,36 @@ class RealtimeService:
                 getattr(event, "turn_revision", None),
             )
             return []
+
+        if isinstance(event, (PartialTranscriptionEvent, TranscriptionCompletedEvent)):
+            if self.input_turn_expired(conn_id, event):
+                logger.info(
+                    "Ignoring transcript for expired input turn=%s rev=%s",
+                    getattr(event, "turn_id", None),
+                    getattr(event, "turn_revision", None),
+                )
+                return []
+            record = self.input_record_for_event(conn_id, event)
+            turn_id = getattr(event, "turn_id", None)
+            turn_revision = getattr(event, "turn_revision", None)
+            if record is None and (turn_id is not None or turn_revision is not None):
+                logger.info("Ignoring transcript for an input turn with no live item mapping")
+                return []
+            if record is not None and record.item_id != bypass_input_fence_item_id and not record.commit_ready.is_set():
+                event_bytes = self._staged_event_bytes(event)
+                if (
+                    len(record.staged_events) >= MAX_STAGED_INPUT_TRANSCRIPT_EVENTS
+                    or record.staged_bytes + event_bytes > MAX_STAGED_INPUT_TRANSCRIPT_BYTES
+                ):
+                    return [
+                        self.make_error(
+                            "Too many input transcription events arrived before the item commit was delivered.",
+                            "input_transcription_staging_overflow",
+                        )
+                    ]
+                record.staged_events.append(event)
+                record.staged_bytes += event_bytes
+                return []
 
         self._observe_turn_event(event)
         if isinstance(event, AssistantTextEvent):

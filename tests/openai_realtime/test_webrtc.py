@@ -41,9 +41,10 @@ from speech_to_speech.api.openai_realtime.webrtc_session import (  # noqa: E402
     WEBRTC_SAMPLE_RATE,
     PcmResampler,
     PipelineAudioTrack,
+    WebRTCSession,
 )
 from speech_to_speech.pipeline.cancel_scope import CancelScope  # noqa: E402
-from speech_to_speech.pipeline.events import SpeechStartedEvent  # noqa: E402
+from speech_to_speech.pipeline.events import SpeechStartedEvent, SpeechStoppedEvent  # noqa: E402
 from speech_to_speech.pipeline.messages import AUDIO_RESPONSE_DONE  # noqa: E402
 
 from .test_openai_client import _ServerEnv  # noqa: E402
@@ -118,12 +119,19 @@ class TestAppendPcm:
         unit = _make_unit()
         conn_id = unit.service.register()
 
-        assert unit.service.handle_audio_commit(conn_id) is not None  # empty buffer errors
-
         unit.service.append_pcm(conn_id, b"\x01\x00" * 512, PIPELINE_SAMPLE_RATE)
-        committed = unit.service.handle_audio_commit(conn_id)
-        assert committed is not None
-        assert committed.type == "input_audio_buffer.committed"
+        rejected = unit.service.handle_audio_commit(conn_id)
+        assert rejected.type == "error"
+        assert rejected.error.type == "input_audio_buffer_commit_not_allowed"
+        assert unit.service._state(conn_id).audio_buffer_has_data is True
+
+        unit.service.dispatch_pipeline_event(conn_id, SpeechStartedEvent())
+        events = unit.service.dispatch_pipeline_event(conn_id, SpeechStoppedEvent())
+        assert [event.type for event in events] == [
+            "input_audio_buffer.speech_stopped",
+            "input_audio_buffer.committed",
+        ]
+        assert unit.service._state(conn_id).audio_buffer_has_data is False
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +232,50 @@ class TestPipelineAudioTrack:
 
 
 class TestWebRTCDispatch:
+    async def test_closed_data_channel_send_reports_transport_failure(self):
+        session = object.__new__(WebRTCSession)
+        session._dc = None
+
+        unit = _make_unit()
+        conn_id = unit.service.register()
+        try:
+            with pytest.raises(ConnectionError):
+                await session.send_events([unit.service.build_session_created(conn_id)])
+        finally:
+            unit.service.unregister(conn_id)
+
+    async def test_close_releases_session_before_hung_peer_close(self):
+        class _HungPeer:
+            def __init__(self) -> None:
+                self.close_started = asyncio.Event()
+                self.never_finishes = asyncio.Event()
+
+            async def close(self) -> None:
+                self.close_started.set()
+                await self.never_finishes.wait()
+
+        class _Track:
+            def stop(self) -> None:
+                pass
+
+        peer = _HungPeer()
+        released = []
+        session = object.__new__(WebRTCSession)
+        session._closed = False
+        session._tasks = []
+        session._track = _Track()
+        session._pc = peer
+        session._on_closed = lambda: released.append(True)
+
+        close_task = asyncio.create_task(session.close())
+        await peer.close_started.wait()
+        try:
+            assert released == [True]
+        finally:
+            close_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await close_task
+
     async def test_append_rejected_over_webrtc(self):
         unit = _make_unit()
         conn_id = unit.service.register()
@@ -323,6 +375,15 @@ class TestBargeInAfterResponseDone:
                 spy = _FakeTransport()
                 assert unit.session is not None
                 unit.session.transport = spy
+                conn_id = unit.session.session_id
+                discard_lock_states: list[bool] = []
+                original_discard = spy.discard_pending_audio
+
+                def _discard_with_lock_observation() -> None:
+                    discard_lock_states.append(unit.service._state(conn_id).outbound_lock.locked())
+                    original_discard()
+
+                spy.discard_pending_audio = _discard_with_lock_observation
                 generation_before = unit.cancel_scope.generation
 
                 unit.text_output_queue.put(SpeechStartedEvent())
@@ -331,6 +392,7 @@ class TestBargeInAfterResponseDone:
                 while time.monotonic() < deadline and spy.discards == 0:
                     time.sleep(0.02)
                 assert spy.discards == 1
+                assert discard_lock_states == [True]
                 # Nothing to cancel: no response was active.
                 assert unit.cancel_scope.generation == generation_before
         stop_event.set()

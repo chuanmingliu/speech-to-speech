@@ -44,7 +44,7 @@ flowchart LR
 
 1. **Inbound audio**: Client sends `input_audio_buffer.append` with base64 PCM. `RealtimeService` decodes, resamples to 16 kHz, splits into 512-sample chunks, and puts them on the `recv_audio_chunks_queue` for VAD.
 2. **Speech detection**: VAD detects speech boundaries and emits `speech_started` / `speech_stopped` events on the `text_output_queue`. Full utterance audio goes to STT.
-3. **Transcription**: STT output passes through `TranscriptionNotifier`, which taps the transcript for `transcription.delta` / `transcription.completed` events before forwarding to the LLM.
+3. **Transcription**: STT output passes through `TranscriptionNotifier`. User transcript events are held until the provider-VAD `speech_stopped` boundary has emitted and delivered `input_audio_buffer.committed`, then they are released in order before forwarding to the LLM.
 4. **Generation**: The LLM generates text (and optional tool calls). `LMOutputProcessor` splits the output: clean text goes to TTS, and `assistant_text` + tool call dicts go to the `text_output_queue`.
 5. **Outbound audio**: TTS writes PCM chunks to `send_audio_chunks_queue`. The router's async `_send_loop` drains both queues, encoding PCM as `response.output_audio.delta` events and translating internal messages into protocol events.
 6. **Session config**: `session.update` events deep-merge into `RuntimeConfig`, which is a shared Pydantic model read by VAD (turn detection thresholds), LLM (instructions, tools), and TTS (voice) at processing time.
@@ -58,6 +58,7 @@ flowchart LR
 | Event | Description |
 |---|---|
 | `input_audio_buffer.append` | Stream base64 PCM audio. Decoded, resampled to 16 kHz, and chunked for the VAD. |
+| `input_audio_buffer.commit` | Unsupported in this provider-VAD-only service; returns a nonfatal `input_audio_buffer_commit_not_allowed` error without consuming buffered audio. |
 | `session.update` | Deep-merge session config (instructions, tools, voice, turn detection, audio format). |
 | `conversation.item.create` | Inject `input_text` or `function_call_output` into the LLM context without triggering generation. |
 | `response.create` | Trigger LLM generation. Supports per-response `instructions` and `tool_choice` overrides. |
@@ -68,9 +69,11 @@ flowchart LR
 | Event | Description |
 |---|---|
 | `session.created` | Sent on connection with current session config. |
+| `session.updated` | Sent after an accepted update with the effective deep-merged session config. Unspecified fields remain unchanged (or `null` when no concrete provider value was configured). |
 | `error` | Protocol errors (`session_limit_reached`, `unknown_or_invalid_event`, `invalid_session_type`, `conversation_already_has_active_response`, etc.) |
-| `input_audio_buffer.speech_started` | VAD detected user speech. |
-| `input_audio_buffer.speech_stopped` | End of user speech segment. |
+| `input_audio_buffer.speech_started` | VAD detected user speech and reserved its input item ID without appending it to conversation history yet. |
+| `input_audio_buffer.speech_stopped` | End of user speech segment. Uses the same reserved item ID as `speech_started`. |
+| `input_audio_buffer.committed` | Provider-VAD owns the commit boundary. Emitted after `speech_stopped` and delivered before any transcript event for that item. |
 | `conversation.item.created` | Acknowledges injected `input_text` from `conversation.item.create`. |
 | `conversation.item.input_audio_transcription.delta` | Streaming partial transcript (when live transcription is enabled). |
 | `conversation.item.input_audio_transcription.completed` | Final transcript for the user turn (with duration usage). |
@@ -80,6 +83,12 @@ flowchart LR
 | `response.output_audio_transcript.done` | Full assistant text transcript for the turn. |
 | `response.function_call_arguments.done` | Tool call with `call_id`, `name`, and JSON `arguments`. |
 | `response.done` | Response finished (`completed`, `cancelled` with reason `turn_detected` or `client_cancelled`). |
+
+`audio.input.turn_detection` supports only `server_vad` (also the default). `semantic_vad` and explicit `null`/manual turn detection are rejected without changing the effective session because this service has neither a semantic-VAD provider nor a client-owned manual audio buffer.
+
+An input item ID is immutable once its commit has been delivered. If the provider later reopens the same logical turn at a higher revision, that new speech segment reserves and commits a new wire item; the domain-level revision may replace the speculative transcript in model context, but the server never recommits or rewinds the earlier item.
+
+Partial STT results are treated as cumulative hypotheses. The server emits only append-only suffix deltas with `content_index: 0`; if a provider rewrites an earlier prefix, further partials for that item are suppressed until the authoritative completed transcript arrives.
 
 ---
 

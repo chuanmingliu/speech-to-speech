@@ -68,7 +68,7 @@ class ConversationHandler(RealtimeBaseHandler):
             previous_item_id=st.last_item_id,
             item=item,
         )
-        st.last_item_id = item.id
+        self._service.advance_conversation_tail(conn_id, item.id)
         return [event]
 
     def flush_deferred_items(self, conn_id: str) -> list[ServerEvent]:
@@ -98,14 +98,30 @@ class ConversationHandler(RealtimeBaseHandler):
     # ── Pipeline event handlers ────────────────────
 
     def on_partial_transcription(self, conn_id: str, event: PartialTranscriptionEvent) -> list[ServerEvent]:
-        """Handle partial_transcription: emit transcription delta event."""
+        """Convert cumulative hypotheses into safe append-only transcript deltas."""
+        record = self._service.input_record_for_event(conn_id, event)
+        if record is None:
+            return []
+        hypothesis = event.delta
+        previous = record.partial_hypothesis
+        if record.partial_rewrite_suppressed:
+            record.partial_hypothesis = hypothesis
+            return []
+        if previous and not hypothesis.startswith(previous):
+            record.partial_hypothesis = hypothesis
+            record.partial_rewrite_suppressed = True
+            return []
+        delta = hypothesis[len(previous) :]
+        record.partial_hypothesis = hypothesis
+        if not delta:
+            return []
         return [
             ConversationItemInputAudioTranscriptionDeltaEvent(
                 type="conversation.item.input_audio_transcription.delta",
                 event_id=self._next_event_id(),
-                content_index=self._next_input_content_index(conn_id),
-                item_id=self._input_item_id(conn_id),
-                delta=event.delta,
+                content_index=0,
+                item_id=self._service.input_item_id_for_event(conn_id, event),
+                delta=delta,
             )
         ]
 
@@ -118,7 +134,7 @@ class ConversationHandler(RealtimeBaseHandler):
                 type="conversation.item.input_audio_transcription.completed",
                 event_id=self._next_event_id(),
                 content_index=0,
-                item_id=self._input_item_id(conn_id),
+                item_id=self._service.input_item_id_for_event(conn_id, event),
                 transcript=event.transcript,
                 usage=UsageTranscriptTextUsageDuration(
                     seconds=st.input_audio_duration_s,

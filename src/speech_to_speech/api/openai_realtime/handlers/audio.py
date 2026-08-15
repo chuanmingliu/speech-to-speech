@@ -17,6 +17,7 @@ from openai.types.realtime import (
 from speech_to_speech.api.openai_realtime.handlers.base import RealtimeBaseHandler
 from speech_to_speech.api.openai_realtime.utils import StreamingPCMResampler, resample
 from speech_to_speech.pipeline.events import SpeechStartedEvent, SpeechStoppedEvent
+from speech_to_speech.utils.utils import is_out_of_band
 
 if TYPE_CHECKING:
     from speech_to_speech.api.openai_realtime.service import ServerEvent
@@ -32,21 +33,38 @@ CHUNK_SIZE_BYTES = CHUNK_SAMPLES * BYTES_PER_SAMPLE
 class AudioHandler(RealtimeBaseHandler):
     """Owns inbound audio decoding/chunking and outbound audio encoding."""
 
-    def _start_input_item(self, conn_id: str, *, preserve_active_response: bool = False) -> str:
+    def _start_input_item(
+        self,
+        conn_id: str,
+        *,
+        preserve_active_response: bool = False,
+        turn_id: str | None = None,
+        turn_revision: int | None = None,
+        supersedes_item_id: str | None = None,
+    ) -> str:
         response = self._service.response
         st = self._state(conn_id)
         previous_item_id = st.last_item_id
+        predecessor_tail_version = st.conversation_tail_version
         if not preserve_active_response:
             item_id = response._start_item(conn_id)
         else:
             response_item_id = st.current_item_id
+            response_item_published = st.current_item_published
             response_content_index = st.content_index
             item_id = response._start_item(conn_id)
             st.current_item_id = response_item_id
+            st.current_item_published = response_item_published
             st.content_index = response_content_index
-        st.input_content_index = 0
-        st.input_audio_item_previous_id = previous_item_id
-        st.input_audio_item_committed = False
+        self._service.register_input_item(
+            conn_id,
+            item_id=item_id,
+            previous_item_id=previous_item_id,
+            predecessor_tail_version=predecessor_tail_version,
+            turn_id=turn_id,
+            turn_revision=turn_revision,
+            supersedes_item_id=supersedes_item_id,
+        )
         return item_id
 
     def handle_audio_append(self, conn_id: str, event: InputAudioBufferAppendEvent) -> list[bytes]:
@@ -72,7 +90,7 @@ class AudioHandler(RealtimeBaseHandler):
         Shared by both transports: the WebSocket route feeds it decoded
         ``input_audio_buffer.append`` payloads, the WebRTC transport feeds it
         PCM decoded from inbound media-track frames. Keeps the sub-chunk
-        remainder and the commit bookkeeping (``audio_buffer_has_data``) in
+        remainder and provider-VAD activity bookkeeping (``audio_buffer_has_data``) in
         one place regardless of how audio arrives.
         """
         st = self._state(conn_id)
@@ -95,29 +113,11 @@ class AudioHandler(RealtimeBaseHandler):
             st.audio_buffer_has_data = True
         return chunks
 
-    def handle_audio_commit(self, conn_id: str) -> InputAudioBufferCommittedEvent | RealtimeErrorEvent:
-        """Commit the audio buffer. Returns an error if no audio was appended."""
-        st = self._state(conn_id)
-        if not st.audio_buffer_has_data:
-            return self.make_error(
-                message="Input audio buffer is empty, nothing to commit.",
-                _type="input_audio_buffer_commit_empty",
-            )
-
-        item_id = st.speculative_input_item_id
-        if item_id is None or st.input_audio_item_committed:
-            item_id = self._start_input_item(conn_id, preserve_active_response=st.in_response)
-            st.speculative_input_item_id = item_id
-
-        st.audio_buffer_has_data = False
-        st.input_audio_item_committed = True
-        st.last_item_id = item_id
-        logger.debug("Audio buffer committed")
-        return InputAudioBufferCommittedEvent(
-            type="input_audio_buffer.committed",
-            event_id=self._next_event_id(),
-            item_id=item_id,
-            previous_item_id=st.input_audio_item_previous_id,
+    def handle_audio_commit(self, conn_id: str) -> RealtimeErrorEvent:
+        """Reject explicit commits without mutating the provider-owned buffer."""
+        return self.make_error(
+            message="Client input_audio_buffer.commit is not supported; provider VAD owns input commits.",
+            _type="input_audio_buffer_commit_not_allowed",
         )
 
     # ── Pipeline event handlers ────────────────────
@@ -133,28 +133,33 @@ class AudioHandler(RealtimeBaseHandler):
         preserve_active_response = st.in_response
         if is_reopen:
             input_item_id = st.speculative_input_item_id
-            if input_item_id is None:
+            candidate = st.input_items.get(input_item_id) if input_item_id is not None else None
+            if not self._service.can_reuse_input_item(conn_id, candidate):
                 input_item_id = self._start_input_item(
                     conn_id,
                     preserve_active_response=preserve_active_response,
+                    turn_id=event.turn_id,
+                    turn_revision=event.turn_revision,
+                    supersedes_item_id=input_item_id,
                 )
-                st.speculative_input_item_id = input_item_id
-            elif not preserve_active_response:
-                st.current_item_id = input_item_id
-                st.content_index = 0
-            st.input_audio_item_committed = False
+            else:
+                assert candidate is not None
+                self._service.bind_input_turn(conn_id, candidate, event.turn_id, event.turn_revision)
+                if not preserve_active_response:
+                    st.current_item_id = input_item_id
+                    st.content_index = 0
             st.input_audio_duration_s = 0.0
-            st.input_content_index = 0
         else:
             input_item_id = self._start_input_item(
                 conn_id,
                 preserve_active_response=preserve_active_response,
+                turn_id=event.turn_id,
+                turn_revision=event.turn_revision,
             )
-            st.speculative_input_item_id = input_item_id
             st.response_usage.turns += 1
         st.speculative_turn_id = event.turn_id
         st.speculative_turn_revision = event.turn_revision
-        st.last_item_id = input_item_id
+        assert input_item_id is not None
         events.append(
             InputAudioBufferSpeechStartedEvent(
                 type="input_audio_buffer.speech_started",
@@ -166,16 +171,47 @@ class AudioHandler(RealtimeBaseHandler):
         return events
 
     def on_speech_stopped(self, conn_id: str, event: SpeechStoppedEvent) -> list[ServerEvent]:
-        """Handle VAD speech_stopped: record duration and emit stopped event."""
+        """Commit the provider-owned VAD item before any transcript is published."""
+        st = self._state(conn_id)
         if event.duration_s:
-            self._state(conn_id).input_audio_duration_s = event.duration_s
+            st.input_audio_duration_s = event.duration_s
+
+        record = self._service.input_record_for_event(conn_id, event)
+        if record is not None and record.committed:
+            return []
+        if record is None:
+            if event.turn_id is not None or event.turn_revision is not None:
+                logger.info("Ignoring identified speech stop without a live input item")
+                return []
+            item_id = self._start_input_item(
+                conn_id,
+                preserve_active_response=st.in_response,
+                turn_id=event.turn_id,
+                turn_revision=event.turn_revision,
+            )
+            record = st.input_items[item_id]
+        else:
+            item_id = record.item_id
+
+        record.previous_item_id = st.last_item_id
+        record.predecessor_tail_version = st.conversation_tail_version
+        record.tail_version = self._service.advance_conversation_tail(conn_id, item_id)
+        record.committed = True
+        st.audio_buffer_has_data = False
+
         return [
             InputAudioBufferSpeechStoppedEvent(
                 type="input_audio_buffer.speech_stopped",
                 event_id=self._next_event_id(),
                 audio_end_ms=event.audio_end_ms,
-                item_id=self._input_item_id(conn_id),
-            )
+                item_id=item_id,
+            ),
+            InputAudioBufferCommittedEvent(
+                type="input_audio_buffer.committed",
+                event_id=self._next_event_id(),
+                item_id=item_id,
+                previous_item_id=record.previous_item_id,
+            ),
         ]
 
     # ── Outbound audio encoding ──────────────────
@@ -200,6 +236,9 @@ class AudioHandler(RealtimeBaseHandler):
         events: list[ServerEvent] = []
         need_created = st.current_response_id is None
         resp_id, item_id = response._ensure_response(conn_id)
+        if not is_out_of_band(st.current_response_params) and not st.current_item_published:
+            self._service.advance_conversation_tail(conn_id, item_id)
+            st.current_item_published = True
         if need_created:
             events.append(
                 ResponseCreatedEvent(

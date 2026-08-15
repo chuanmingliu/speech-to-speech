@@ -19,7 +19,7 @@ from openai.types.realtime.realtime_response_status import RealtimeResponseStatu
 from openai.types.realtime.realtime_response_usage import RealtimeResponseUsage
 
 from speech_to_speech.api.openai_realtime.handlers.base import RealtimeBaseHandler
-from speech_to_speech.LLM.chat import ChatItemError
+from speech_to_speech.LLM.chat import Chat, ChatItemError, add_supported_item
 from speech_to_speech.pipeline.events import AssistantTextEvent
 from speech_to_speech.pipeline.messages import GenerateResponseRequest
 from speech_to_speech.utils.utils import _generate_id, is_out_of_band, response_wants_audio
@@ -66,6 +66,7 @@ class ResponseHandler(RealtimeBaseHandler):
         st.response_usage.reset()
         st.current_response_id = None
         st.current_item_id = None
+        st.current_item_published = False
         st.content_index = 0
         st.in_response = False
         st.response_pending = False
@@ -78,6 +79,7 @@ class ResponseHandler(RealtimeBaseHandler):
         st = self._state(conn_id)
         item_id = _generate_id("item")
         st.current_item_id = item_id
+        st.current_item_published = False
         st.content_index = 0
         st.input_audio_duration_s = 0.0
         return item_id
@@ -135,6 +137,18 @@ class ResponseHandler(RealtimeBaseHandler):
 
     # ── Public handlers ───────────────────────────
 
+    @staticmethod
+    def _isolated_chat_snapshot(chat: Chat) -> Chat:
+        """Deepen ``Chat.copy()`` so validation cannot mutate live history."""
+        snapshot = chat.copy()
+        if snapshot.init_chat_message is not None:
+            snapshot.init_chat_message = snapshot.init_chat_message.model_copy(deep=True)
+        snapshot.buffer = [item.model_copy(deep=True) for item in snapshot.buffer]
+        snapshot._pending_tool_calls = {
+            call_id: item.model_copy(deep=True) for call_id, item in snapshot._pending_tool_calls.items()
+        }
+        return snapshot
+
     def handle_response_create(self, conn_id: str, event: ResponseCreateEvent) -> ServerEvent | None:
         """Trigger a response.
 
@@ -163,11 +177,22 @@ class ResponseHandler(RealtimeBaseHandler):
         # they appear in history. Out-of-band: leave the default conversation untouched —
         # the input rides along on the request and seeds a throwaway chat in the LM.
         if not out_of_band and event.response and event.response.input:
-            for input_item in event.response.input:
-                try:
-                    self._service.conversation._append_item(conn_id, input_item)
-                except ChatItemError as exc:
-                    return self.make_error(message=str(exc), _type="invalid_input_item")
+            validated_inputs = [input_item.model_copy(deep=True) for input_item in event.response.input]
+            validation_chat = self._isolated_chat_snapshot(st.runtime_config.chat)
+            try:
+                for input_item in validated_inputs:
+                    add_supported_item(validation_chat, input_item)
+            except ChatItemError as exc:
+                return self.make_error(message=str(exc), _type="invalid_input_item")
+
+            # Validation above ran the whole ordered batch against an isolated
+            # copy, including function-call/output dependencies. Applying the
+            # already-normalized copies cannot discover a later invalid item,
+            # so rejected requests leave neither partial chat nor tail state.
+            for input_item in validated_inputs:
+                self._service.conversation._append_item(conn_id, input_item)
+                self._service.advance_conversation_tail(conn_id, input_item.id)
+            event.response.input = validated_inputs
 
         st.in_response = True
         st.response_pending = False
@@ -293,7 +318,13 @@ class ResponseHandler(RealtimeBaseHandler):
         st = self._state(conn_id)
         events: list[ServerEvent] = []
         resp_id, item_id = self._ensure_response(conn_id)
-        st.last_item_id = item_id
+        if (
+            (event.text or event.tools)
+            and not is_out_of_band(st.current_response_params)
+            and not st.current_item_published
+        ):
+            self._service.advance_conversation_tail(conn_id, item_id)
+            st.current_item_published = True
         output_idx = 0
         if event.text:
             if response_wants_audio(st.current_response_params):

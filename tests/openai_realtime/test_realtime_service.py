@@ -72,6 +72,18 @@ def _make_audio_append(audio_b64: str) -> InputAudioBufferAppendEvent:
     return InputAudioBufferAppendEvent(type="input_audio_buffer.append", audio=audio_b64)
 
 
+def _dispatch_and_deliver(service, conn_id: str, event):
+    """Model the transport delivering every synchronous server event."""
+    events = service.dispatch_pipeline_event(conn_id, event)
+    delivered = list(events)
+    for server_event in events:
+        if isinstance(server_event, InputAudioBufferCommittedEvent):
+            service.begin_input_commit_flush(conn_id, server_event.item_id)
+            delivered.extend(service.drain_staged_input_events(conn_id, server_event.item_id))
+            service.finish_input_commit_flush(conn_id, server_event.item_id)
+    return delivered
+
+
 # ===================================================================
 # Connection lifecycle
 # ===================================================================
@@ -497,98 +509,392 @@ class TestHandleAudioCommit:
         chunks = service.append_pcm(conn_id, _pcm_bytes(512), 16000)
         assert len(chunks) == 1
 
-    def test_manual_commit_allocates_input_item_and_advances_tail(self, service, conn_id):
+    def test_provider_vad_rejects_commit_even_when_buffer_is_empty(self, service, conn_id):
+        err = service.handle_audio_commit(conn_id)
+        assert isinstance(err, RealtimeErrorEvent)
+        assert err.error.type == "input_audio_buffer_commit_not_allowed"
+
+
+class TestInputCommitOwnershipAndTailIntegrity:
+    """Regression coverage for commit ownership and monotonic conversation history."""
+
+    @staticmethod
+    def _set_turn_detection(service, conn_id, turn_detection) -> None:
+        service.handle_session_update(
+            conn_id,
+            SessionUpdateEvent(
+                type="session.update",
+                session={
+                    "type": "realtime",
+                    "audio": {"input": {"turn_detection": turn_detection}},
+                },
+            ),
+        )
+
+    @staticmethod
+    def _append_full_chunk(service, conn_id) -> None:
+        assert len(service.append_pcm(conn_id, _pcm_bytes(512), 16000)) == 1
+
+    def test_manual_turn_detection_is_rejected_without_changing_effective_provider_mode(self, service, conn_id):
+        before = service._state(conn_id).runtime_config.session.audio.input.turn_detection
+
+        result = service.handle_session_update(
+            conn_id,
+            SessionUpdateEvent(
+                type="session.update",
+                session={
+                    "type": "realtime",
+                    "audio": {"input": {"turn_detection": None}},
+                },
+            ),
+        )
+
+        assert isinstance(result, RealtimeErrorEvent)
+        assert result.error.type == "manual_input_turns_not_supported"
+        assert service._state(conn_id).runtime_config.session.audio.input.turn_detection is before
+
+    def test_semantic_turn_detection_is_rejected_without_mutating_server_vad(self, service, conn_id):
+        before = service._state(conn_id).runtime_config.session.audio.input.turn_detection
+
+        result = service.handle_session_update(
+            conn_id,
+            SessionUpdateEvent(
+                type="session.update",
+                session={
+                    "type": "realtime",
+                    "audio": {"input": {"turn_detection": {"type": "semantic_vad", "eagerness": "high"}}},
+                },
+            ),
+        )
+
+        assert isinstance(result, RealtimeErrorEvent)
+        assert result.error.type == "semantic_vad_not_supported"
+        assert service._state(conn_id).runtime_config.session.audio.input.turn_detection is before
+
+    def test_provider_vad_rejects_client_commit_without_consuming_buffer(self, service, conn_id):
+        self._set_turn_detection(service, conn_id, {"type": "server_vad"})
         self._append_full_chunk(service, conn_id)
 
         result = service.handle_audio_commit(conn_id)
 
-        assert isinstance(result, InputAudioBufferCommittedEvent)
-        assert result.event_id.startswith("event_")
-        assert result.item_id.startswith("item_")
-        assert result.previous_item_id is None
-        st = service._state(conn_id)
-        assert st.audio_buffer_has_data is False
-        assert st.last_item_id == result.item_id
+        assert isinstance(result, RealtimeErrorEvent)
+        assert result.error.type == "input_audio_buffer_commit_not_allowed"
+        assert service._state(conn_id).audio_buffer_has_data is True
 
-    def test_commit_reuses_speech_started_item_and_preserves_its_predecessor(self, service, conn_id):
+    def test_provider_vad_speech_stop_commits_item_before_transcript(self, service, conn_id):
+        self._set_turn_detection(service, conn_id, {"type": "server_vad"})
+        service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStartedEvent(turn_id="turn_provider", turn_revision=0),
+        )
+
+        transcript = service.dispatch_pipeline_event(
+            conn_id,
+            TranscriptionCompletedEvent(
+                transcript="not before the commit",
+                turn_id="turn_provider",
+                turn_revision=0,
+            ),
+        )
+        stopped = service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStoppedEvent(turn_id="turn_provider", turn_revision=0),
+        )
+
+        assert transcript == []
+        assert [event.type for event in stopped] == [
+            "input_audio_buffer.speech_stopped",
+            "input_audio_buffer.committed",
+        ]
+        assert stopped[0].item_id == stopped[1].item_id
+
+    def test_speech_start_reserves_item_without_advancing_conversation_tail(self, service, conn_id):
         prior = service.handle_conversation_item_create(
             conn_id,
             ConversationItemCreateEvent(
                 type="conversation.item.create",
                 item={
-                    "id": "msg_before_audio",
+                    "id": "msg_before_speech",
                     "type": "message",
                     "role": "user",
                     "content": [{"type": "input_text", "text": "before"}],
                 },
             ),
         )[0]
-        speech_started = service.dispatch_pipeline_event(conn_id, SpeechStartedEvent())[0]
-        self._append_full_chunk(service, conn_id)
 
-        result = service.handle_audio_commit(conn_id)
+        started = service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStartedEvent(turn_id="turn_reserved", turn_revision=0),
+        )[0]
 
-        assert isinstance(result, InputAudioBufferCommittedEvent)
-        assert result.item_id == speech_started.item_id
-        assert result.previous_item_id == prior.item.id
-        assert result.previous_item_id != result.item_id
+        assert service._state(conn_id).last_item_id == prior.item.id
 
-    def test_sequential_commits_allocate_distinct_items(self, service, conn_id):
-        self._append_full_chunk(service, conn_id)
-        first = service.handle_audio_commit(conn_id)
-        self._append_full_chunk(service, conn_id)
-        second = service.handle_audio_commit(conn_id)
-
-        assert isinstance(first, InputAudioBufferCommittedEvent)
-        assert isinstance(second, InputAudioBufferCommittedEvent)
-        assert first.event_id != second.event_id
-        assert first.item_id != second.item_id
-        assert second.previous_item_id == first.item_id
-
-    def test_commit_uses_assistant_item_as_whole_conversation_predecessor(self, service, conn_id):
-        service.dispatch_pipeline_event(conn_id, AssistantTextEvent(text="assistant reply"))
-        assistant_item_id = service._state(conn_id).last_item_id
-        service.finish_response(conn_id)
-        self._append_full_chunk(service, conn_id)
-
-        result = service.handle_audio_commit(conn_id)
-
-        assert isinstance(result, InputAudioBufferCommittedEvent)
-        assert result.previous_item_id == assistant_item_id
-
-    def test_commit_uses_function_output_as_whole_conversation_predecessor(self, service, conn_id):
-        from openai.types.realtime.realtime_conversation_item_function_call import (
-            RealtimeConversationItemFunctionCall,
-        )
-
-        service._state(conn_id).runtime_config.chat.add_item(
-            RealtimeConversationItemFunctionCall(
-                type="function_call", call_id="call_commit", name="lookup", arguments="{}"
-            )
-        )
-        created = service.handle_conversation_item_create(
+        intervening = service.handle_conversation_item_create(
             conn_id,
             ConversationItemCreateEvent(
                 type="conversation.item.create",
                 item={
-                    "id": "fco_function_output",
-                    "type": "function_call_output",
-                    "output": "ok",
-                    "call_id": "call_commit",
+                    "id": "msg_during_speech",
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "during"}],
                 },
             ),
         )[0]
-        self._append_full_chunk(service, conn_id)
+        stopped = service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStoppedEvent(turn_id="turn_reserved", turn_revision=0),
+        )
 
-        result = service.handle_audio_commit(conn_id)
+        assert intervening.previous_item_id == prior.item.id
+        assert stopped[0].item_id == started.item_id
+        assert stopped[1].item_id == started.item_id
+        assert stopped[1].previous_item_id == intervening.item.id
+        assert service._state(conn_id).last_item_id == started.item_id
+
+    @pytest.mark.parametrize("intervening_kind", ["client", "assistant", "tool", "function_output"])
+    def test_provider_commit_never_rolls_tail_back_past_intervening_item(
+        self,
+        service,
+        conn_id,
+        intervening_kind,
+    ):
+        self._set_turn_detection(service, conn_id, {"type": "server_vad"})
+        started = service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStartedEvent(turn_id="turn_provider", turn_revision=0),
+        )
+        speculative_id = started[0].item_id
+
+        if intervening_kind == "client":
+            service.handle_conversation_item_create(
+                conn_id,
+                ConversationItemCreateEvent(
+                    type="conversation.item.create",
+                    item={
+                        "id": "msg_between",
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "between"}],
+                    },
+                ),
+            )
+        elif intervening_kind == "assistant":
+            service.dispatch_pipeline_event(conn_id, AssistantTextEvent(text="between"))
+            service.finish_response(conn_id)
+        elif intervening_kind == "tool":
+            service.dispatch_pipeline_event(
+                conn_id,
+                AssistantTextEvent(
+                    text="",
+                    tools=[
+                        {
+                            "type": "function_call",
+                            "call_id": "call_between",
+                            "name": "lookup",
+                            "arguments": "{}",
+                        }
+                    ],
+                ),
+            )
+            service.finish_response(conn_id)
+        else:
+            from openai.types.realtime.realtime_conversation_item_function_call import (
+                RealtimeConversationItemFunctionCall,
+            )
+
+            service._state(conn_id).runtime_config.chat.add_item(
+                RealtimeConversationItemFunctionCall(
+                    type="function_call",
+                    call_id="call_between",
+                    name="lookup",
+                    arguments="{}",
+                )
+            )
+            service.handle_conversation_item_create(
+                conn_id,
+                ConversationItemCreateEvent(
+                    type="conversation.item.create",
+                    item={
+                        "id": "fco_between",
+                        "type": "function_call_output",
+                        "output": "ok",
+                        "call_id": "call_between",
+                    },
+                ),
+            )
+
+        intervening_tail = service._state(conn_id).last_item_id
+        assert intervening_tail != speculative_id
+        result = service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStoppedEvent(turn_id="turn_provider", turn_revision=0),
+        )[-1]
 
         assert isinstance(result, InputAudioBufferCommittedEvent)
-        assert result.previous_item_id == created.item.id
+        assert result.item_id == speculative_id
+        assert result.previous_item_id == intervening_tail
+        assert service._state(conn_id).last_item_id == result.item_id
 
-    def test_commit_empty_buffer(self, service, conn_id):
-        err = service.handle_audio_commit(conn_id)
-        assert isinstance(err, RealtimeErrorEvent)
-        assert err.error.type == "input_audio_buffer_commit_empty"
+    def test_reopened_turn_after_tail_advance_keeps_reserved_item(self, service, conn_id):
+        self._set_turn_detection(service, conn_id, {"type": "server_vad"})
+        first = service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStartedEvent(turn_id="turn_reopen", turn_revision=0),
+        )[0]
+        service.handle_conversation_item_create(
+            conn_id,
+            ConversationItemCreateEvent(
+                type="conversation.item.create",
+                item={
+                    "id": "msg_between_revisions",
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "between revisions"}],
+                },
+            ),
+        )
+        intervening_tail = service._state(conn_id).last_item_id
+
+        service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStartedEvent(
+                turn_id="turn_reopen",
+                turn_revision=1,
+                reopened=True,
+            ),
+        )
+        committed = service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStoppedEvent(turn_id="turn_reopen", turn_revision=1),
+        )[-1]
+
+        assert isinstance(committed, InputAudioBufferCommittedEvent)
+        assert committed.item_id == first.item_id
+        assert committed.previous_item_id == intervening_tail
+
+    def test_reopen_after_delivered_commit_gets_new_immutable_wire_item(self, service, conn_id):
+        first_started = service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStartedEvent(turn_id="turn_reopen_committed", turn_revision=0),
+        )[0]
+        _dispatch_and_deliver(
+            service,
+            conn_id,
+            SpeechStoppedEvent(turn_id="turn_reopen_committed", turn_revision=0),
+        )
+        [intervening] = service.handle_conversation_item_create(
+            conn_id,
+            ConversationItemCreateEvent(
+                type="conversation.item.create",
+                item={
+                    "id": "msg_after_first_commit",
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "between committed revisions"}],
+                },
+            ),
+        )
+
+        second_started = service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStartedEvent(
+                turn_id="turn_reopen_committed",
+                turn_revision=1,
+                reopened=True,
+            ),
+        )[0]
+        second_stopped = service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStoppedEvent(turn_id="turn_reopen_committed", turn_revision=1),
+        )
+
+        assert second_started.item_id != first_started.item_id
+        assert second_stopped[0].item_id == second_started.item_id
+        assert second_stopped[1].item_id == second_started.item_id
+        assert second_stopped[1].previous_item_id == intervening.item.id
+
+    def test_continued_assistant_output_does_not_republish_tail_during_speech(self, service, conn_id):
+        from openai.types.realtime.realtime_audio_input_turn_detection import ServerVad
+
+        st = service._state(conn_id)
+        st.runtime_config.session.audio.input.turn_detection = ServerVad(
+            type="server_vad",
+            interrupt_response=False,
+        )
+        first_output = service.dispatch_pipeline_event(conn_id, AssistantTextEvent(text="first"))[0]
+        response_item_id = first_output.item_id
+        published_version = st.conversation_tail_version
+
+        started = service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStartedEvent(turn_id="turn_overlap", turn_revision=0, interrupt_response=False),
+        )[0]
+        second_output = service.dispatch_pipeline_event(conn_id, AssistantTextEvent(text="second"))[0]
+        stopped = service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStoppedEvent(turn_id="turn_overlap", turn_revision=0),
+        )
+
+        assert second_output.item_id == response_item_id
+        assert stopped[0].item_id == started.item_id
+        assert stopped[1].item_id == started.item_id
+        assert stopped[1].previous_item_id == response_item_id
+        assert st.conversation_tail_version == published_version + 1
+
+    def test_duplicate_speech_stop_does_not_commit_a_second_item(self, service, conn_id):
+        self._set_turn_detection(service, conn_id, {"type": "server_vad"})
+        service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStartedEvent(turn_id="turn_duplicate_stop", turn_revision=0),
+        )
+        first = service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStoppedEvent(turn_id="turn_duplicate_stop", turn_revision=0),
+        )
+        tail = service._state(conn_id).last_item_id
+
+        duplicate = service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStoppedEvent(turn_id="turn_duplicate_stop", turn_revision=0),
+        )
+
+        assert [event.type for event in first] == [
+            "input_audio_buffer.speech_stopped",
+            "input_audio_buffer.committed",
+        ]
+        assert duplicate == []
+        assert service._state(conn_id).last_item_id == tail
+
+    def test_retired_duplicate_speech_stop_does_not_manufacture_a_new_item(self, service, conn_id):
+        service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStartedEvent(turn_id="turn_retired_stop", turn_revision=0),
+        )
+        _dispatch_and_deliver(
+            service,
+            conn_id,
+            SpeechStoppedEvent(turn_id="turn_retired_stop", turn_revision=0),
+        )
+        for index in range(65):
+            service.dispatch_pipeline_event(
+                conn_id,
+                SpeechStartedEvent(turn_id=f"turn_after_retired_{index}", turn_revision=0),
+            )
+            _dispatch_and_deliver(
+                service,
+                conn_id,
+                SpeechStoppedEvent(turn_id=f"turn_after_retired_{index}", turn_revision=0),
+            )
+        tail_before_duplicate = service._state(conn_id).last_item_id
+
+        duplicate = service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStoppedEvent(turn_id="turn_retired_stop", turn_revision=0),
+        )
+
+        assert duplicate == []
+        assert service._state(conn_id).last_item_id == tail_before_duplicate
 
 
 # ===================================================================
@@ -659,6 +965,15 @@ class TestHandleResponseCreate:
             service.unregister(conn_id)
 
     def test_response_create_preserves_latest_user_turn_timing(self, service, conn_id, text_prompt_queue):
+        service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStartedEvent(turn_id="turn_1", turn_revision=2),
+        )
+        _dispatch_and_deliver(
+            service,
+            conn_id,
+            SpeechStoppedEvent(turn_id="turn_1", turn_revision=2),
+        )
         service.dispatch_pipeline_event(
             conn_id,
             TranscriptionCompletedEvent(
@@ -744,6 +1059,82 @@ class TestHandleResponseCreate:
         assert "call_bogus" in result.error.message
         assert service._state(conn_id).in_response is False
 
+    def test_rejected_response_input_batch_does_not_leave_partial_history(self, service, conn_id):
+        result = service.handle_response_create(
+            conn_id,
+            ResponseCreateEvent(
+                type="response.create",
+                response={
+                    "input": [
+                        {
+                            "id": "msg_valid",
+                            "type": "message",
+                            "role": "user",
+                            "content": [{"type": "input_text", "text": "must roll back"}],
+                        },
+                        {
+                            "id": "fco_invalid",
+                            "type": "function_call_output",
+                            "output": "invalid",
+                            "call_id": "call_missing",
+                        },
+                    ]
+                },
+            ),
+        )
+
+        st = service._state(conn_id)
+        assert isinstance(result, RealtimeErrorEvent)
+        assert result.error.type == "invalid_input_item"
+        assert st.runtime_config.chat.buffer == []
+        assert st.last_item_id is None
+        assert st.conversation_tail_version == 0
+        assert st.in_response is False
+
+    def test_response_input_validation_snapshot_does_not_complete_live_tool_call(self, service, conn_id):
+        from openai.types.realtime.realtime_conversation_item_function_call import (
+            RealtimeConversationItemFunctionCall,
+        )
+
+        chat = service._state(conn_id).runtime_config.chat
+        function_call = RealtimeConversationItemFunctionCall(
+            id="fc_existing",
+            type="function_call",
+            call_id="call_existing",
+            name="lookup",
+            arguments="{}",
+        )
+        chat.add_item(function_call)
+
+        result = service.handle_response_create(
+            conn_id,
+            ResponseCreateEvent(
+                type="response.create",
+                response={
+                    "input": [
+                        {
+                            "id": "fco_valid",
+                            "type": "function_call_output",
+                            "output": "valid",
+                            "call_id": "call_existing",
+                        },
+                        {
+                            "id": "fco_invalid",
+                            "type": "function_call_output",
+                            "output": "invalid",
+                            "call_id": "call_missing",
+                        },
+                    ]
+                },
+            ),
+        )
+
+        assert isinstance(result, RealtimeErrorEvent)
+        assert result.error.type == "invalid_input_item"
+        assert chat.buffer == []
+        assert function_call.status is None
+        assert chat._pending_tool_calls == {"call_existing": function_call}
+
     def test_double_response_create_rejected(self, service, conn_id, text_prompt_queue):
         """Second response.create is rejected because in_response is set immediately."""
         evt = ResponseCreateEvent(type="response.create")
@@ -782,7 +1173,55 @@ class TestHandleResponseCreate:
         assert isinstance(result, ResponseCreatedEvent)
         assert len(chat.buffer) == 1  # in-band input is threaded into the conversation
 
+    def test_response_create_in_band_input_advances_provider_commit_predecessor(
+        self,
+        service,
+        conn_id,
+    ):
+        result = service.handle_response_create(
+            conn_id,
+            ResponseCreateEvent(
+                type="response.create",
+                response={
+                    "input": [
+                        {
+                            "id": "msg_seed",
+                            "type": "message",
+                            "role": "user",
+                            "content": [{"type": "input_text", "text": "seed"}],
+                        }
+                    ]
+                },
+            ),
+        )
+        assert isinstance(result, ResponseCreatedEvent)
+
+        service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStartedEvent(
+                turn_id="turn_after_response_input",
+                turn_revision=0,
+                interrupt_response=False,
+            ),
+        )
+        stopped = service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStoppedEvent(turn_id="turn_after_response_input", turn_revision=0),
+        )
+
+        assert isinstance(stopped[-1], InputAudioBufferCommittedEvent)
+        assert stopped[-1].previous_item_id == "msg_seed"
+
     def test_response_create_out_of_band_carries_null_turn(self, service, conn_id, text_prompt_queue):
+        service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStartedEvent(turn_id="turn_1", turn_revision=2),
+        )
+        _dispatch_and_deliver(
+            service,
+            conn_id,
+            SpeechStoppedEvent(turn_id="turn_1", turn_revision=2),
+        )
         service.dispatch_pipeline_event(
             conn_id,
             TranscriptionCompletedEvent(
@@ -884,9 +1323,7 @@ class TestEncodeAudioChunk:
         source_rate = 16000
         output_rate = 24000
         sample_count = source_rate
-        samples = (
-            np.sin(np.arange(sample_count) * 2 * np.pi * 437.3 / source_rate) * 22000
-        ).astype(np.int16)
+        samples = (np.sin(np.arange(sample_count) * 2 * np.pi * 437.3 / source_rate) * 22000).astype(np.int16)
 
         whole = StreamingPCMResampler(source_rate, output_rate)
         expected = whole.process(samples.tobytes()) + whole.finish()
@@ -907,9 +1344,7 @@ class TestEncodeAudioChunk:
         source_rate = 16000
         output_rate = 24000
         sample_count = source_rate
-        samples = (
-            np.sin(np.arange(sample_count) * 2 * np.pi * 437.3 / source_rate) * 22000
-        ).astype(np.int16)
+        samples = (np.sin(np.arange(sample_count) * 2 * np.pi * 437.3 / source_rate) * 22000).astype(np.int16)
         service._state(conn_id).runtime_config.session = RealtimeSessionCreateRequest.model_validate(
             {
                 "type": "realtime",
@@ -1097,14 +1532,17 @@ class TestDispatchPipelineEvent:
 
     def test_speech_stopped_emits_event(self, service, conn_id):
         service.dispatch_pipeline_event(conn_id, SpeechStartedEvent())
-        events = service.dispatch_pipeline_event(
+        events = _dispatch_and_deliver(
+            service,
             conn_id,
             SpeechStoppedEvent(),
         )
-        assert len(events) == 1
+        assert len(events) == 2
         evt = events[0]
         assert isinstance(evt, InputAudioBufferSpeechStoppedEvent)
         assert evt.audio_end_ms == 0
+        assert isinstance(events[1], InputAudioBufferCommittedEvent)
+        assert events[1].item_id == evt.item_id
 
     def test_speech_stopped_same_item_id_as_started(self, service, conn_id):
         started = service.dispatch_pipeline_event(
@@ -1128,12 +1566,14 @@ class TestDispatchPipelineEvent:
     def test_speech_stopped_zero_duration_not_stored(self, service, conn_id):
         """Phantom trigger (duration_s=0) emits stopped event but doesn't overwrite duration."""
         service.dispatch_pipeline_event(conn_id, SpeechStartedEvent())
-        events = service.dispatch_pipeline_event(
+        events = _dispatch_and_deliver(
+            service,
             conn_id,
             SpeechStoppedEvent(),
         )
-        assert len(events) == 1
+        assert len(events) == 2
         assert isinstance(events[0], InputAudioBufferSpeechStoppedEvent)
+        assert isinstance(events[1], InputAudioBufferCommittedEvent)
         assert service._state(conn_id).input_audio_duration_s == 0.0
 
     # -- assistant_text --
@@ -1435,19 +1875,204 @@ class TestDispatchPipelineEvent:
         )
         e2 = service.dispatch_pipeline_event(
             conn_id,
-            PartialTranscriptionEvent(delta="lo"),
+            PartialTranscriptionEvent(delta="hello"),
         )
-        assert isinstance(e1[0], ConversationItemInputAudioTranscriptionDeltaEvent)
-        assert e1[0].content_index == 0
-        assert e1[0].delta == "hel"
-        assert isinstance(e2[0], ConversationItemInputAudioTranscriptionDeltaEvent)
-        assert e2[0].content_index == 1
+        assert e1 == []
+        assert e2 == []
+        delivered = _dispatch_and_deliver(service, conn_id, SpeechStoppedEvent())
+        deltas = [event for event in delivered if isinstance(event, ConversationItemInputAudioTranscriptionDeltaEvent)]
+        assert len(deltas) == 2
+        assert deltas[0].content_index == 0
+        assert deltas[0].delta == "hel"
+        assert deltas[1].content_index == 0
+        assert deltas[1].delta == "lo"
+
+    def test_partial_transcription_suppresses_rewritten_hypothesis_until_final(self, service, conn_id):
+        service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStartedEvent(turn_id="turn_rewrite", turn_revision=0),
+        )
+        for hypothesis in ("hello", "hullo", "hullo world"):
+            assert (
+                service.dispatch_pipeline_event(
+                    conn_id,
+                    PartialTranscriptionEvent(
+                        delta=hypothesis,
+                        turn_id="turn_rewrite",
+                        turn_revision=0,
+                    ),
+                )
+                == []
+            )
+
+        delivered = _dispatch_and_deliver(
+            service,
+            conn_id,
+            SpeechStoppedEvent(turn_id="turn_rewrite", turn_revision=0),
+        )
+        deltas = [event for event in delivered if isinstance(event, ConversationItemInputAudioTranscriptionDeltaEvent)]
+
+        assert [event.delta for event in deltas] == ["hello"]
+        assert [event.content_index for event in deltas] == [0]
+
+    def test_staged_transcript_bytes_are_bounded(self, service, conn_id):
+        service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStartedEvent(turn_id="turn_large_partial", turn_revision=0),
+        )
+
+        events = service.dispatch_pipeline_event(
+            conn_id,
+            PartialTranscriptionEvent(
+                delta="界" * (256 * 1024 // 3 + 1),
+                turn_id="turn_large_partial",
+                turn_revision=0,
+            ),
+        )
+        record = service.input_record_for_event(
+            conn_id,
+            PartialTranscriptionEvent(
+                delta="ignored",
+                turn_id="turn_large_partial",
+                turn_revision=0,
+            ),
+        )
+
+        assert len(events) == 1
+        assert isinstance(events[0], RealtimeErrorEvent)
+        assert events[0].error.type == "input_transcription_staging_overflow"
+        assert record is not None
+        assert record.staged_events == []
+
+    def test_staged_transcript_event_count_is_bounded(self, service, conn_id):
+        service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStartedEvent(turn_id="turn_many_partials", turn_revision=0),
+        )
+        for index in range(64):
+            assert (
+                service.dispatch_pipeline_event(
+                    conn_id,
+                    PartialTranscriptionEvent(
+                        delta=str(index),
+                        turn_id="turn_many_partials",
+                        turn_revision=0,
+                    ),
+                )
+                == []
+            )
+
+        overflow = service.dispatch_pipeline_event(
+            conn_id,
+            PartialTranscriptionEvent(
+                delta="overflow",
+                turn_id="turn_many_partials",
+                turn_revision=0,
+            ),
+        )
+        record = service.input_record_for_event(
+            conn_id,
+            PartialTranscriptionEvent(
+                delta="ignored",
+                turn_id="turn_many_partials",
+                turn_revision=0,
+            ),
+        )
+
+        assert len(overflow) == 1
+        assert isinstance(overflow[0], RealtimeErrorEvent)
+        assert overflow[0].error.type == "input_transcription_staging_overflow"
+        assert record is not None
+        assert len(record.staged_events) == 64
+
+    def test_input_item_history_keeps_flushing_record_and_bounded_tombstones(self, service, conn_id):
+        first_started = service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStartedEvent(turn_id="turn_0", turn_revision=0),
+        )[0]
+        first_stopped = service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStoppedEvent(turn_id="turn_0", turn_revision=0),
+        )
+        service.begin_input_commit_flush(conn_id, first_started.item_id)
+
+        for index in range(1, 90):
+            service.dispatch_pipeline_event(
+                conn_id,
+                SpeechStartedEvent(turn_id=f"turn_{index}", turn_revision=0),
+            )
+            _dispatch_and_deliver(
+                service,
+                conn_id,
+                SpeechStoppedEvent(turn_id=f"turn_{index}", turn_revision=0),
+            )
+
+        st = service._state(conn_id)
+        assert first_started.item_id in st.input_items
+        assert len(st.input_items) <= 65
+        assert len(st.input_item_by_turn) <= 65
+        assert first_stopped[1].item_id == first_started.item_id
+
+    def test_transcript_for_evicted_item_tombstone_is_dropped(self, service, conn_id):
+        service.dispatch_pipeline_event(
+            conn_id,
+            SpeechStartedEvent(turn_id="turn_evicted", turn_revision=0),
+        )
+        _dispatch_and_deliver(
+            service,
+            conn_id,
+            SpeechStoppedEvent(turn_id="turn_evicted", turn_revision=0),
+        )
+        for index in range(65):
+            service.dispatch_pipeline_event(
+                conn_id,
+                SpeechStartedEvent(turn_id=f"turn_new_{index}", turn_revision=0),
+            )
+            _dispatch_and_deliver(
+                service,
+                conn_id,
+                SpeechStoppedEvent(turn_id=f"turn_new_{index}", turn_revision=0),
+            )
+
+        events = service.dispatch_pipeline_event(
+            conn_id,
+            TranscriptionCompletedEvent(
+                transcript="too late",
+                turn_id="turn_evicted",
+                turn_revision=0,
+            ),
+        )
+
+        assert events == []
+        assert len(service._state(conn_id).expired_input_turns) <= 64
+
+    def test_identified_transcript_without_live_input_record_is_dropped(self, service, conn_id):
+        service.dispatch_pipeline_event(conn_id, AssistantTextEvent(text="current response"))
+        st = service._state(conn_id)
+        current_item_id = st.current_item_id
+        chat_size = len(st.runtime_config.chat.buffer)
+
+        events = service.dispatch_pipeline_event(
+            conn_id,
+            TranscriptionCompletedEvent(
+                transcript="must not attach to the current response",
+                turn_id="turn_unknown_or_retired",
+                turn_revision=7,
+            ),
+        )
+
+        assert events == []
+        assert st.current_item_id == current_item_id
+        assert len(st.runtime_config.chat.buffer) == chat_size
+        assert service.text_prompt_queue is not None
+        assert service.text_prompt_queue.empty()
 
     # -- transcription_completed --
 
     def test_transcription_completed_emits_event(self, service, conn_id):
         service.dispatch_pipeline_event(conn_id, SpeechStartedEvent())
-        service.dispatch_pipeline_event(
+        _dispatch_and_deliver(
+            service,
             conn_id,
             SpeechStoppedEvent(duration_s=3.2),
         )
@@ -1472,7 +2097,8 @@ class TestDispatchPipelineEvent:
         text_prompt_queue,
     ):
         service.dispatch_pipeline_event(conn_id, SpeechStartedEvent())
-        service.dispatch_pipeline_event(
+        _dispatch_and_deliver(
+            service,
             conn_id,
             SpeechStoppedEvent(duration_s=1.1),
         )
@@ -1505,7 +2131,8 @@ class TestDispatchPipelineEvent:
             conn_id,
             SpeechStartedEvent(turn_id="turn_1", turn_revision=0),
         )
-        service.dispatch_pipeline_event(
+        _dispatch_and_deliver(
+            service,
             conn_id,
             SpeechStoppedEvent(duration_s=1.0, turn_id="turn_1", turn_revision=0),
         )
@@ -1519,7 +2146,8 @@ class TestDispatchPipelineEvent:
             conn_id,
             SpeechStartedEvent(turn_id="turn_1", turn_revision=1, reopened=True),
         )
-        service.dispatch_pipeline_event(
+        _dispatch_and_deliver(
+            service,
             conn_id,
             SpeechStoppedEvent(duration_s=2.0, turn_id="turn_1", turn_revision=1),
         )
@@ -1553,7 +2181,8 @@ class TestDispatchPipelineEvent:
             conn_id,
             SpeechStartedEvent(turn_id="turn_1", turn_revision=0),
         )
-        service.dispatch_pipeline_event(
+        _dispatch_and_deliver(
+            service,
             conn_id,
             SpeechStoppedEvent(duration_s=1.0, turn_id="turn_1", turn_revision=0),
         )
@@ -1567,7 +2196,8 @@ class TestDispatchPipelineEvent:
             conn_id,
             SpeechStartedEvent(turn_id="turn_1", turn_revision=1, reopened=True),
         )
-        service.dispatch_pipeline_event(
+        _dispatch_and_deliver(
+            service,
             conn_id,
             SpeechStoppedEvent(duration_s=2.0, turn_id="turn_1", turn_revision=1),
         )
@@ -1599,7 +2229,8 @@ class TestDispatchPipelineEvent:
             conn_id,
             SpeechStartedEvent(turn_id="turn_1", turn_revision=0),
         )
-        service.dispatch_pipeline_event(
+        _dispatch_and_deliver(
+            service,
             conn_id,
             SpeechStoppedEvent(duration_s=1.0, turn_id="turn_1", turn_revision=0),
         )
@@ -1613,7 +2244,8 @@ class TestDispatchPipelineEvent:
             conn_id,
             SpeechStartedEvent(turn_id="turn_1", turn_revision=1, reopened=True),
         )
-        service.dispatch_pipeline_event(
+        _dispatch_and_deliver(
+            service,
             conn_id,
             SpeechStoppedEvent(duration_s=2.0, turn_id="turn_1", turn_revision=1),
         )
@@ -1668,7 +2300,8 @@ class TestDispatchPipelineEvent:
             conn_id,
             SpeechStartedEvent(turn_id="turn_1", turn_revision=0),
         )
-        service.dispatch_pipeline_event(
+        _dispatch_and_deliver(
+            service,
             conn_id,
             SpeechStoppedEvent(duration_s=1.0, turn_id="turn_1", turn_revision=0),
         )
@@ -1695,7 +2328,8 @@ class TestDispatchPipelineEvent:
             conn_id,
             SpeechStartedEvent(turn_id="turn_1", turn_revision=1, reopened=True),
         )
-        service.dispatch_pipeline_event(
+        _dispatch_and_deliver(
+            service,
             conn_id,
             SpeechStoppedEvent(duration_s=2.5, turn_id="turn_1", turn_revision=1),
         )
@@ -1770,9 +2404,11 @@ class TestIdAndStateManagement:
         st = service._state(conn_id)
         assert st.last_item_id is None
 
-        # 1) speech_started sets last_item_id via dispatch_pipeline_event
+        # 1) speech_started reserves identity but only speech_stopped publishes it.
         events = service.dispatch_pipeline_event(conn_id, SpeechStartedEvent())
         input_id = events[0].item_id
+        assert st.last_item_id is None
+        service.dispatch_pipeline_event(conn_id, SpeechStoppedEvent())
         assert st.last_item_id == input_id
 
         # 2) assistant_text sets last_item_id via dispatch_pipeline_event
@@ -1990,24 +2626,24 @@ class TestUsageMetricsTracking:
 
     def test_transcription_completed_accumulates_duration(self, service, conn_id):
         service.dispatch_pipeline_event(conn_id, SpeechStartedEvent())
-        service.dispatch_pipeline_event(conn_id, SpeechStoppedEvent(duration_s=2.5))
+        _dispatch_and_deliver(service, conn_id, SpeechStoppedEvent(duration_s=2.5))
         service.dispatch_pipeline_event(conn_id, TranscriptionCompletedEvent(transcript="hi"))
         assert service._state(conn_id).response_usage.audio_duration_s == 2.5
 
     def test_multiple_transcriptions_accumulate_duration(self, service, conn_id):
         service.dispatch_pipeline_event(conn_id, SpeechStartedEvent())
-        service.dispatch_pipeline_event(conn_id, SpeechStoppedEvent(duration_s=1.0))
+        _dispatch_and_deliver(service, conn_id, SpeechStoppedEvent(duration_s=1.0))
         service.dispatch_pipeline_event(conn_id, TranscriptionCompletedEvent(transcript="a"))
 
         service.dispatch_pipeline_event(conn_id, SpeechStartedEvent())
-        service.dispatch_pipeline_event(conn_id, SpeechStoppedEvent(duration_s=2.0))
+        _dispatch_and_deliver(service, conn_id, SpeechStoppedEvent(duration_s=2.0))
         service.dispatch_pipeline_event(conn_id, TranscriptionCompletedEvent(transcript="b"))
 
         assert service._state(conn_id).response_usage.audio_duration_s == 3.0
 
     def test_end_response_rolls_duration_into_global(self, service, conn_id):
         service.dispatch_pipeline_event(conn_id, SpeechStartedEvent())
-        service.dispatch_pipeline_event(conn_id, SpeechStoppedEvent(duration_s=4.0))
+        _dispatch_and_deliver(service, conn_id, SpeechStoppedEvent(duration_s=4.0))
         service.dispatch_pipeline_event(conn_id, TranscriptionCompletedEvent(transcript="x"))
         service.response._ensure_response(conn_id)
         service.response._end_response(conn_id)
@@ -2017,7 +2653,7 @@ class TestUsageMetricsTracking:
     def test_unregister_rolls_duration_into_global(self, service):
         cid = service.register()
         service.dispatch_pipeline_event(cid, SpeechStartedEvent())
-        service.dispatch_pipeline_event(cid, SpeechStoppedEvent(duration_s=1.5))
+        _dispatch_and_deliver(service, cid, SpeechStoppedEvent(duration_s=1.5))
         service.dispatch_pipeline_event(cid, TranscriptionCompletedEvent(transcript="y"))
         service.unregister(cid)
         assert service.total_usage.audio_duration_s == 1.5
@@ -2120,7 +2756,7 @@ class TestUsageMetricsTracking:
     def test_get_usage(self, service, conn_id):
         # Speech cycle before response so speech_started doesn't cancel anything
         service.dispatch_pipeline_event(conn_id, SpeechStartedEvent())
-        service.dispatch_pipeline_event(conn_id, SpeechStoppedEvent(duration_s=3.0))
+        _dispatch_and_deliver(service, conn_id, SpeechStoppedEvent(duration_s=3.0))
         service.dispatch_pipeline_event(conn_id, TranscriptionCompletedEvent(transcript="z"))
 
         service.response._ensure_response(conn_id)

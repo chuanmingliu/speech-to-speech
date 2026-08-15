@@ -12,7 +12,6 @@ and hands client-visible traffic to the transport attached to the current
 
 from __future__ import annotations
 
-import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
@@ -22,7 +21,9 @@ from starlette.websockets import WebSocketState
 if TYPE_CHECKING:
     from speech_to_speech.api.openai_realtime.service import RealtimeService, ServerEvent
 
-logger = logging.getLogger(__name__)
+
+class TransportError(ConnectionError):
+    """The peer cannot accept an event that the service attempted to deliver."""
 
 
 class SessionTransport(ABC):
@@ -51,26 +52,16 @@ class SessionTransport(ABC):
 
 
 async def send_ws_event(ws: WebSocket, event: ServerEvent) -> None:
-    # Skip cleanly when the ws is already closing/closed — happens during Ctrl-C
-    # shutdown, where the lifespan starts closing sockets while the route handler
-    # or send loop is still in flight pushing events.
     if ws.application_state != WebSocketState.CONNECTED:
-        return
+        raise TransportError("WebSocket is not connected")
     try:
         await ws.send_json(event.model_dump())
-    except WebSocketDisconnect:
-        logger.debug("Skipped event: ws disconnected mid-send")
+    except WebSocketDisconnect as exc:
+        raise TransportError("WebSocket disconnected during send") from exc
     except RuntimeError as e:
-        # Race: ws closed between the state check above and the send. Starlette
-        # raises a plain RuntimeError("Unexpected ASGI message 'websocket.send'
-        # after sending 'websocket.close' ...") — harmless during shutdown.
-        msg = str(e)
-        if "websocket.close" in msg or "websocket.disconnect" in msg or "response already completed" in msg:
-            logger.debug(f"Skipped event: ws already closed ({msg})")
-        else:
-            logger.error(f"Failed to send event to client: {e}")
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"Failed to send event to client: {e}")
+        raise TransportError("WebSocket rejected an event send") from e
+    except Exception as exc:  # noqa: BLE001
+        raise TransportError(f"WebSocket event send failed ({type(exc).__name__})") from exc
 
 
 class WebSocketTransport(SessionTransport):
