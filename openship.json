@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openship.io/openship.schema.json",
+  "framework": "fastapi",
+  "packageManager": "pip",
+  "installCommand": "pip install -e \".[tencent-asr]\" && pip install -r demo/requirements.txt",
+  "startCommand": "python scripts/run_openship_demo.py",
+  "port": 8000,
+  "runtime": "docker"
+}
