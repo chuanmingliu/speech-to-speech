@@ -27,6 +27,7 @@ Endpoints:
   GET  /api/me               -> login + tier + remaining budget (LB mode only)
   POST /api/search           -> { results, answer }  Google via Serper.dev
   POST /api/calls            -> proxies the WebRTC SDP offer to <s2s>/v1/realtime/calls
+  WS   /v1/realtime          -> same-origin proxy to S2S_BACKEND_WS (OpenShip / public HTTPS)
   POST /api/session          -> proxies <LB>/session: a grant, or a queue ticket
   GET  /api/queue/{id}       -> proxies <LB>/queue/{id}: position, or a grant on claim
   DELETE /api/queue/{id}     -> leave the queue (explicit "Leave queue" button)
@@ -50,7 +51,7 @@ from urllib.parse import urlsplit, urlunsplit
 import auth
 import httpx
 import limiter
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -72,6 +73,10 @@ LOAD_BALANCER_URL = os.environ.get("LOAD_BALANCER_URL", "").strip()
 SPEECH_TO_SPEECH_URL = os.environ.get("SPEECH_TO_SPEECH_URL", "").strip()
 if SPEECH_TO_SPEECH_URL:
     LOAD_BALANCER_URL = ""
+# Loopback realtime server used by the same-origin /v1/realtime WebSocket proxy.
+# Set this when the browser cannot dial the backend port directly (OpenShip).
+S2S_BACKEND_WS = os.environ.get("S2S_BACKEND_WS", "").strip()
+S2S_SAME_ORIGIN = os.environ.get("S2S_SAME_ORIGIN", "").lower() in {"1", "true", "yes"}
 # HF injects SPACE_ID ("owner/space") into every Space runtime; it's absent
 # locally and on a plain `docker run`. We meter conversation time ONLY on the
 # deployed Space — i.e. when BOTH the LB is configured AND we're on a Space.
@@ -158,26 +163,96 @@ class SearchRequest(BaseModel):
     key: str | None = None
 
 
+def _public_s2s_url(request: Request) -> str:
+    """Realtime URL the browser should dial.
+
+    Local / env-pinned deploys return ``SPEECH_TO_SPEECH_URL``. When
+    ``S2S_SAME_ORIGIN`` is set, the browser uses this app's public host so
+    OpenShip's edge (HTTPS) can terminate TLS and the demo can proxy to the
+    loopback backend."""
+    if not S2S_SAME_ORIGIN:
+        return SPEECH_TO_SPEECH_URL
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http")
+    proto = proto.split(",")[0].strip()
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    host = host.split(",")[0].strip()
+    ws_scheme = "wss" if proto == "https" else "ws"
+    return f"{ws_scheme}://{host}/v1/realtime"
+
+
 @app.get("/api/config")
-def config():
+def config(request: Request):
     """Client bootstrap: whether web search is available, whether the deploy runs
     behind a load balancer (so the browser uses the /api/session proxy + limiter),
     whether HF sign-in is available, and whether the user may instead set a direct
     s2s server URL. The LB address itself is intentionally NOT included."""
+    s2s_url = _public_s2s_url(request)
     return {
         "search": bool(SERPER_KEY),
         "lb": bool(LOAD_BALANCER_URL),
-        "allowDirect": not LOAD_BALANCER_URL,
+        "allowDirect": not LOAD_BALANCER_URL and not S2S_SAME_ORIGIN,
         # Deploy-pinned direct s2s URL (empty when unset). Not a secret: the
         # browser dials it itself, and Settings shows it locked.
-        "s2sUrl": SPEECH_TO_SPEECH_URL,
+        "s2sUrl": s2s_url,
         # WebRTC transport availability: the /api/calls proxy only forwards to
         # the env-pinned URL (never a client-supplied one), so the toggle is
-        # offered exactly when that URL exists.
-        "rtc": bool(SPEECH_TO_SPEECH_URL),
+        # offered exactly when that URL exists. Same-origin WebSocket deploys
+        # keep ICE off — the backend is loopback-only.
+        "rtc": bool(SPEECH_TO_SPEECH_URL) and not S2S_SAME_ORIGIN,
         "iceServers": RTC_ICE_SERVERS,
         "auth": AUTH_ENABLED,
     }
+
+
+@app.websocket("/v1/realtime")
+async def realtime_proxy(client: WebSocket):
+    """Forward browser Realtime traffic to the in-container backend."""
+    if not S2S_BACKEND_WS:
+        await client.close(code=1011)
+        return
+    await client.accept()
+    try:
+        import websockets
+        from websockets.exceptions import ConnectionClosed
+    except ImportError:
+        logger.warning("websockets is required for S2S_BACKEND_WS proxying")
+        await client.close(code=1011)
+        return
+
+    try:
+        async with websockets.connect(S2S_BACKEND_WS, max_size=None) as upstream:
+
+            async def client_to_upstream() -> None:
+                try:
+                    while True:
+                        message = await client.receive()
+                        if message["type"] == "websocket.disconnect":
+                            break
+                        text = message.get("text")
+                        if text is not None:
+                            await upstream.send(text)
+                        else:
+                            await upstream.send(message["bytes"])
+                except WebSocketDisconnect:
+                    pass
+
+            async def upstream_to_client() -> None:
+                try:
+                    async for data in upstream:
+                        if isinstance(data, bytes):
+                            await client.send_bytes(data)
+                        else:
+                            await client.send_text(data)
+                except ConnectionClosed:
+                    pass
+
+            await asyncio.gather(client_to_upstream(), upstream_to_client())
+    except Exception as exc:
+        logger.warning("realtime proxy failed: %r", exc)
+        try:
+            await client.close(code=1011)
+        except Exception:
+            pass
 
 
 @app.get("/api/me")
