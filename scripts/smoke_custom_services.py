@@ -55,10 +55,32 @@ def smoke_tencent(audio_path: Path) -> str:
         queue_out=Queue(),
     )
     audio = _load_audio_16k_mono(audio_path)
-    results = list(handler.process(VADAudio(audio=audio, mode="final")))
+    streaming = bool(os.getenv("TENCENT_ASR_APP_ID", "").strip())
+    try:
+        if streaming:
+            mid = max(int(0.4 * 16000), len(audio) // 2)
+            list(
+                handler.process(
+                    VADAudio(audio=audio[:mid], mode="progressive", turn_id="smoke", turn_revision=0)
+                )
+            )
+            results = list(
+                handler.process(
+                    VADAudio(audio=audio, mode="final", turn_id="smoke", turn_revision=0)
+                )
+            )
+            mode = "realtime WebSocket"
+        else:
+            results = list(handler.process(VADAudio(audio=audio, mode="final")))
+            mode = "SentenceRecognition"
+    finally:
+        handler.cleanup()
     if len(results) != 1:
         raise RuntimeError(f"Tencent ASR returned {len(results)} results; expected one.")
-    print(f"Tencent ASR: OK ({len(audio) / 16000:.2f}s audio, {len(results[0].text)} transcript chars)")
+    print(
+        f"Tencent ASR ({mode}): OK "
+        f"({len(audio) / 16000:.2f}s audio, {len(results[0].text)} transcript chars)"
+    )
     return results[0].text
 
 

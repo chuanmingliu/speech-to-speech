@@ -278,14 +278,22 @@ def overwrite_device_argument(common_device: Optional[str], *handler_kwargs: Any
 
 
 def enable_tencent_realtime_transcription(module_kwargs: ModuleArguments) -> None:
-    """Stream VAD audio into Tencent realtime ASR when an AppId is configured."""
+    """Stream VAD audio into Tencent ASR while the user is speaking.
+
+    Progressive snapshots are what the realtime WebSocket consumes. Without
+    ``TENCENT_ASR_APP_ID`` the handler still receives those snapshots but falls
+    back to non-streaming SentenceRecognition.
+    """
     if module_kwargs.stt != "tencent":
-        return
-    if not os.getenv("TENCENT_ASR_APP_ID", "").strip():
         return
     module_kwargs.enable_live_transcription = True
     if module_kwargs.live_transcription_update_interval >= 0.5:
         module_kwargs.live_transcription_update_interval = 0.2
+    if not os.getenv("TENCENT_ASR_APP_ID", "").strip():
+        logger.warning(
+            "TENCENT_ASR_APP_ID is unset; Tencent ASR will use non-streaming "
+            "SentenceRecognition. Set the App ID to use the realtime WebSocket."
+        )
 
 
 def prepare_module_args(module_kwargs: ModuleArguments, *handler_kwargs: Any) -> None:
@@ -896,8 +904,9 @@ def get_llm_handler(
     if module_kwargs.llm_backend == "chat-completions":
         from speech_to_speech.LLM.chat_completions_language_model import ChatCompletionsApiModelHandler
 
-        # Reuses the responses-api argument class (identical fields: model_name,
-        # base_url, api_key, stream, disable_thinking, ...).
+        # Reuses the responses-api argument class. Prefixed CLI fields
+        # (responses_api_base_url / responses_api_api_key / ...) are mapped in
+        # BaseOpenAICompatibleHandler.setup, which also accepts DEEPSEEK_API_KEY.
         return ChatCompletionsApiModelHandler(
             stop_event,
             queue_in=text_prompt_queue,

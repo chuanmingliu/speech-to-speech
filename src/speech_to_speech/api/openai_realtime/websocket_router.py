@@ -27,6 +27,7 @@ from speech_to_speech.api.openai_realtime.service import (
 from speech_to_speech.api.openai_realtime.transports import (
     SessionTransport,
     WebSocketTransport,
+    log_realtime_event,
     send_ws_event,
 )
 from speech_to_speech.pipeline.control import SESSION_END, PipelineControlMessage, is_control_message
@@ -332,6 +333,8 @@ async def _dispatch_client_event(
     """
     service = unit.service
     event = service.parse_client_event(raw)
+    if event is not None:
+        log_realtime_event("in", event)
     if event is None:
         await transport.send_events(
             [service.make_error(f"Unknown or invalid event: {raw.get('type')}", "unknown_or_invalid_event")]
@@ -426,6 +429,23 @@ def create_app(pool: list[PipelineUnit], stop_event: ThreadingEvent) -> FastAPI:
                     pass
 
     app = FastAPI(lifespan=lifespan)
+
+    def _service_info() -> dict[str, Any]:
+        return {
+            "service": "speech-to-speech",
+            "realtime": "/v1/realtime",
+            "usage": "/v1/usage",
+            "pool": "/v1/pool",
+        }
+
+    @app.get("/")
+    async def root() -> dict[str, Any]:
+        return _service_info()
+
+    @app.get("/json/version")
+    async def inspector_probe() -> dict[str, Any]:
+        """Browser inspectors probe this Chrome DevTools path on the listen port."""
+        return _service_info()
 
     def _claim_unit(transport: SessionTransport | None) -> PipelineUnit | None:
         """Atomically (between asyncio yield points) reserve the first idle unit.

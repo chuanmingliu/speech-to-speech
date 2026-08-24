@@ -184,7 +184,6 @@ cp .env.custom.example .env.local
 set -a
 source .env.local
 set +a
-export OPENAI_API_KEY="$DEEPSEEK_API_KEY"
 ```
 
 Install the Tencent SDK and launch the checked-in realtime profile:

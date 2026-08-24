@@ -79,16 +79,6 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             limits=httpx.Limits(max_keepalive_connections=8, keepalive_expiry=30.0),
         )
         self._owns_client = client is None
-        if self._owns_client:
-            self._warmup_connection()
-
-    def _warmup_connection(self) -> None:
-        try:
-            parsed = httpx.URL(self.endpoint)
-            origin = f"{parsed.scheme}://{parsed.host}"
-            self.client.head(origin, timeout=3.0)
-        except Exception as exc:
-            logger.debug("MiniMax connection warmup skipped: %s", exc)
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -378,11 +368,23 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         if not text:
             return
         console.print(f"[green]ASSISTANT: {text}")
+        logger.info(
+            "Streaming TTS start (%s, turn=%s rev=%s): %s",
+            "sse" if self.stream else "oneshot",
+            tts_input.turn_id,
+            tts_input.turn_revision,
+            text if len(text) <= 80 else f"{text[:80]}…",
+        )
 
         if self.stream:
             yield from self._synthesize_streaming(text, generation, tts_input)
         else:
             yield from self._synthesize_sync(text, generation, tts_input)
+        logger.info(
+            "Streaming TTS finished (turn=%s rev=%s)",
+            tts_input.turn_id,
+            tts_input.turn_revision,
+        )
 
     def cleanup(self) -> None:
         if self._owns_client:

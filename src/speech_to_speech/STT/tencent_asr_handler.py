@@ -29,8 +29,9 @@ TENCENT_SPECULATIVE_REUSE_EXTRA_S = 0.35
 class TencentASRHandler(BaseSTTHandler):
     """Tencent Cloud ASR adapter.
 
-    When ``TENCENT_ASR_APP_ID`` is set, progressive VAD audio is streamed over
-    the realtime WebSocket API so recognition overlaps speech. Otherwise
+    The Tencent profile streams progressive VAD audio over the realtime
+    WebSocket API when ``TENCENT_ASR_APP_ID`` is set, so recognition overlaps
+    speech and emits ``PartialTranscription``. Without an App ID,
     SentenceRecognition runs on finalized (or silence-prefetched) audio.
     """
 
@@ -57,6 +58,7 @@ class TencentASRHandler(BaseSTTHandler):
         self._rt_session: TencentRealtimeASRSession | None = None
         self._rt_key: tuple[str | None, int | None] | None = None
         self._rt_sent = 0
+        self._last_partial = ""
         self._use_realtime = realtime_session_factory is not None or bool(self.app_id)
 
         if client is not None:
@@ -93,6 +95,11 @@ class TencentASRHandler(BaseSTTHandler):
         self._request_model_type = models.SentenceRecognitionRequest
         if self._use_realtime:
             logger.info("Tencent ASR realtime WebSocket enabled")
+        else:
+            logger.warning(
+                "Tencent ASR using SentenceRecognition (non-streaming); "
+                "set TENCENT_ASR_APP_ID to stream PCM over the realtime WebSocket"
+            )
 
     def _pool(self) -> ThreadPoolExecutor:
         if self._executor is None:
@@ -239,6 +246,7 @@ class TencentASRHandler(BaseSTTHandler):
         self._rt_session = None
         self._rt_key = None
         self._rt_sent = 0
+        self._last_partial = ""
 
     def _process_realtime(self, vad_audio: STTIn) -> Iterator[STTOut]:
         if not isinstance(vad_audio, VADAudio):
@@ -248,6 +256,14 @@ class TencentASRHandler(BaseSTTHandler):
             self._ensure_realtime_session(vad_audio)
             text = self._send_realtime_audio(audio)
             if text:
+                if text != self._last_partial:
+                    logger.info(
+                        "Streaming ASR partial (turn=%s rev=%s): %s",
+                        vad_audio.turn_id,
+                        vad_audio.turn_revision,
+                        text if len(text) <= 80 else f"{text[:80]}…",
+                    )
+                    self._last_partial = text
                 yield PartialTranscription(
                     text=text,
                     turn_id=vad_audio.turn_id,
@@ -263,11 +279,12 @@ class TencentASRHandler(BaseSTTHandler):
         finally:
             self._close_realtime()
         logger.info(
-            "Tencent realtime ASR finalized in %.3fs (audio=%.2fs, turn=%s rev=%s)",
+            "Streaming ASR final in %.3fs (audio=%.2fs, turn=%s rev=%s): %s",
             perf_counter() - started_at_s,
             audio.size / self.sample_rate,
             vad_audio.turn_id,
             vad_audio.turn_revision,
+            text if len(text) <= 80 else f"{text[:80]}…",
         )
         if text:
             console.print(f"[yellow]USER: {text}")

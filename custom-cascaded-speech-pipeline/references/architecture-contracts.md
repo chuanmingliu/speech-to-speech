@@ -7,9 +7,9 @@ Browser microphone
   → realtime WebSocket input
   → 16 kHz mono PCM frames
   → VAD
-  → finalized utterance
-  → ASR adapter
-  → Transcription(turn_id, turn_revision)
+  → progressive + finalized utterance
+  → streaming ASR adapter
+  → PartialTranscription then Transcription(turn_id, turn_revision)
   → OpenAI-compatible LLM adapter
   → sentence-sized TTSInput messages
   → TTS adapter
@@ -36,7 +36,9 @@ For Tencent ASR:
 
 - convert finite float samples to clipped little-endian PCM16;
 - preserve turn ID, revision, and speech stop timestamp;
-- when `TENCENT_ASR_APP_ID` is set, stream progressive PCM over the
+- the Tencent profile enables live transcription so VAD emits progressive
+  snapshots about every 0.2 s while the user is speaking;
+- when `TENCENT_ASR_APP_ID` is set, stream those snapshots over the
   realtime WebSocket API (`needvad=0`, `voice_format=1`) and emit
   `PartialTranscription` updates, then one final `Transcription`;
 - otherwise use `SentenceRecognition` on finalized audio, with one

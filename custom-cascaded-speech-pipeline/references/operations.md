@@ -34,6 +34,10 @@ MINIMAX_TTS_MODEL=speech-2.8-turbo
 MINIMAX_TTS_LANGUAGE_BOOST=auto
 ```
 
+`TENCENT_ASR_APP_ID` is required for streaming Tencent ASR (realtime
+WebSocket). Without it the handler falls back to one-shot
+SentenceRecognition and live captions will not appear.
+
 MiniMax credentials are platform-specific. Use:
 
 ```text
@@ -63,8 +67,10 @@ Install the Tencent optional dependency:
 uv sync --extra tencent-asr
 ```
 
-The launcher safely loads simple `KEY=VALUE` entries from `.env.local` and maps
-`DEEPSEEK_API_KEY` to the OpenAI-compatible key expected by the LLM adapter.
+The launcher safely loads simple `KEY=VALUE` entries from `.env.local`. The
+chat-completions adapter reads `DEEPSEEK_API_KEY` and `responses_api_base_url`
+directly, so `speech-to-speech configs/tencent-deepseek-minimax.json` does not
+need `OPENAI_API_KEY`.
 
 ## Verification ladder
 

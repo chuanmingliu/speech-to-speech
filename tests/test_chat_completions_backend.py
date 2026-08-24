@@ -119,6 +119,59 @@ def test_warmup_uses_request_scoped_sdk_retries():
     assert handler.client.last_options == {"max_retries": base_mod.WARMUP_MAX_RETRIES}
 
 
+def test_setup_maps_responses_api_profile_and_deepseek_key(monkeypatch):
+    captured: dict = {}
+
+    class CaptureClient(_FakeClient):
+        def __init__(self, *a, **k):
+            captured.update(k)
+            super().__init__(*a, **k)
+
+    monkeypatch.setattr(base_mod, "OpenAI", CaptureClient)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_BASE", raising=False)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-from-env")
+
+    handler = ChatCompletionsApiModelHandler(
+        threading.Event(),
+        queue.Queue(),
+        queue.Queue(),
+        setup_kwargs=dict(
+            model_name="deepseek-v4-flash",
+            responses_api_base_url="https://api.deepseek.com",
+            responses_api_stream=True,
+            responses_api_disable_thinking=False,
+            compact_history=False,
+        ),
+    )
+
+    assert captured["api_key"] == "ds-from-env"
+    assert captured["base_url"] == "https://api.deepseek.com"
+    assert handler.stream is True
+    assert handler._extra_body is None
+
+
+def test_setup_requires_hosted_or_openai_key(monkeypatch):
+    monkeypatch.setattr(base_mod, "OpenAI", _FakeClient)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    try:
+        ChatCompletionsApiModelHandler(
+            threading.Event(),
+            queue.Queue(),
+            queue.Queue(),
+            setup_kwargs=dict(
+                responses_api_base_url="https://api.deepseek.com",
+                compact_history=False,
+            ),
+        )
+    except ValueError as exc:
+        assert "DEEPSEEK_API_KEY" in str(exc)
+    else:
+        raise AssertionError("expected ValueError when no API key is configured")
+
+
 def _chunk(content=None, tool_calls=None, usage=None):
     choices = []
     if content is not None or tool_calls is not None:

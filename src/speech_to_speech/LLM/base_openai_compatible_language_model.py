@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from time import perf_counter
@@ -156,10 +157,53 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
         )
 
         self.user_role = user_role
+        api_key, base_url, stream, disable_thinking, reasoning_effort = self._resolve_openai_compatible_connection(
+            api_key=api_key,
+            base_url=base_url,
+            stream=stream,
+            disable_thinking=disable_thinking,
+            reasoning_effort=reasoning_effort,
+            extra=_kwargs,
+        )
+        self.stream = stream
         self.client = OpenAI(api_key=api_key, base_url=base_url)
         self._extra_body = self._build_extra_body(base_url, disable_thinking, reasoning_effort)
         self.compactor = build_compactor(self._build_compaction_generate_fn()) if compact_history else None
         self.warmup()
+
+    @staticmethod
+    def _resolve_openai_compatible_connection(
+        *,
+        api_key: Optional[str],
+        base_url: Optional[str],
+        stream: bool,
+        disable_thinking: bool,
+        reasoning_effort: Optional[str],
+        extra: dict[str, Any],
+    ) -> tuple[str, Optional[str], bool, bool, Optional[str]]:
+        """Accept CLI/profile ``responses_api_*`` aliases and hosted-provider env vars.
+
+        ``vars(ResponsesApiLanguageModelHandlerArguments)`` uses prefixed field
+        names. Without this mapping, ``speech-to-speech configs/*.json`` drops
+        DeepSeek's base URL and requires ``OPENAI_API_KEY``.
+        """
+        api_key = api_key or extra.get("responses_api_api_key")
+        base_url = base_url or extra.get("responses_api_base_url")
+        if "responses_api_stream" in extra:
+            stream = bool(extra["responses_api_stream"])
+        if "responses_api_disable_thinking" in extra:
+            disable_thinking = bool(extra["responses_api_disable_thinking"])
+        reasoning_effort = reasoning_effort or extra.get("responses_api_reasoning_effort")
+        if not api_key:
+            api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")
+        if not base_url:
+            base_url = os.getenv("DEEPSEEK_API_BASE")
+        if not api_key:
+            raise ValueError(
+                "OpenAI-compatible LLM requires an API key. Set DEEPSEEK_API_KEY "
+                "for the Tencent/DeepSeek/MiniMax profile, or responses_api_api_key / OPENAI_API_KEY."
+            )
+        return api_key, base_url, stream, disable_thinking, reasoning_effort
 
     @staticmethod
     def _is_official_openai(base_url: Optional[str]) -> bool:
@@ -346,7 +390,14 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
             if not self._turn_output_allowed(turn.turn_id, turn.turn_revision):
                 logger.info("LLM generation cancelled (stale speculative turn)")
                 return
-            yield self._chunk(turn, text=" ".join(batch))
+            flushed = " ".join(batch)
+            logger.info(
+                "Streaming LLM sentence (turn=%s rev=%s): %s",
+                turn.turn_id,
+                turn.turn_revision,
+                flushed if len(flushed) <= 80 else f"{flushed[:80]}…",
+            )
+            yield self._chunk(turn, text=flushed)
 
         def _batch_limit() -> int:
             return 1 if not first_flush_done else self.stream_batch_sentences
@@ -437,6 +488,13 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
                     logger.debug(f"Clean text: {state.clean_text}")
                     yield from _flush(sentence_batch)
             logger.info(f"Tools: {state.tools}")
+            logger.info(
+                "Streaming LLM finished (turn=%s rev=%s in=%d out=%d)",
+                turn.turn_id,
+                turn.turn_revision,
+                state.input_tokens,
+                state.output_tokens,
+            )
 
     def _consume_nonstreaming(self, events: Iterator[ProviderEvent], state: _GenState, turn: _Turn) -> Iterator[LLMOut]:
         if self._generation_is_stale(turn.gen) or not self._turn_is_latest(turn.turn_id, turn.turn_revision):
@@ -493,6 +551,12 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
         try:
             request_started_at_s = perf_counter()
             if error_message is None:
+                logger.info(
+                    "Streaming LLM start (turn=%s rev=%s stream=%s)",
+                    turn.turn_id,
+                    turn.turn_revision,
+                    self.stream,
+                )
                 api_response = self._request(api_input, optional_kwargs)
             if api_response is not None:
                 events = self._iter_events(api_response)

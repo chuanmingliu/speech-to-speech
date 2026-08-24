@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
@@ -23,6 +23,46 @@ if TYPE_CHECKING:
     from speech_to_speech.api.openai_realtime.service import RealtimeService, ServerEvent
 
 logger = logging.getLogger(__name__)
+
+_SKIP_CLIENT_TYPES = {"input_audio_buffer.append"}
+_AUDIO_DELTA = "response.output_audio.delta"
+
+
+def _preview(value: Any, limit: int = 80) -> str:
+    text = str(value)
+    return text if len(text) <= limit else f"{text[:limit]}…"
+
+
+def log_realtime_event(direction: str, event: Any) -> None:
+    """Log essential Realtime protocol events; skip mic appends and extra PCM deltas."""
+    event_type = getattr(event, "type", None)
+    payload = None
+    if event_type is None and isinstance(event, dict):
+        payload = event
+        event_type = event.get("type")
+    if event_type in _SKIP_CLIENT_TYPES:
+        return
+    if event_type == _AUDIO_DELTA:
+        index = getattr(event, "content_index", None) if payload is None else payload.get("content_index")
+        if index not in (None, 0):
+            return
+        response_id = getattr(event, "response_id", None) if payload is None else payload.get("response_id")
+        logger.info("Realtime %s %s (first audio chunk, response=%s)", direction, event_type, response_id)
+        return
+    if payload is None:
+        payload = event.model_dump() if hasattr(event, "model_dump") else {}
+    parts: list[str] = []
+    for key in ("item_id", "response_id", "status", "transcript", "delta"):
+        value = payload.get(key) if isinstance(payload, dict) else None
+        if value is None:
+            continue
+        if key == "delta" and str(event_type).endswith("audio.delta"):
+            continue
+        if key in {"transcript", "delta"}:
+            value = _preview(value)
+        parts.append(f"{key}={value}")
+    extra = f" {' '.join(parts)}" if parts else ""
+    logger.info("Realtime %s %s%s", direction, event_type, extra)
 
 
 class SessionTransport(ABC):
@@ -57,6 +97,7 @@ async def send_ws_event(ws: WebSocket, event: ServerEvent) -> None:
     if ws.application_state != WebSocketState.CONNECTED:
         return
     try:
+        log_realtime_event("out", event)
         await ws.send_json(event.model_dump())
     except WebSocketDisconnect:
         logger.debug("Skipped event: ws disconnected mid-send")

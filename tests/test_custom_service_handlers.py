@@ -468,6 +468,14 @@ def test_enable_tencent_realtime_transcription_sets_live_flag(monkeypatch):
     assert args.live_transcription_update_interval == 0.2
 
 
+def test_enable_tencent_realtime_transcription_streams_without_app_id(monkeypatch):
+    monkeypatch.delenv("TENCENT_ASR_APP_ID", raising=False)
+    args = ModuleArguments(stt="tencent", enable_live_transcription=False)
+    enable_tencent_realtime_transcription(args)
+    assert args.enable_live_transcription is True
+    assert args.live_transcription_update_interval == 0.2
+
+
 def test_vad_silence_prefetch_emits_once():
     import torch
 
@@ -742,7 +750,8 @@ def test_custom_service_json_profile_selects_all_three_providers():
 
     assert args.module_kwargs.mode == "realtime"
     assert args.module_kwargs.stt == "tencent"
-    assert args.module_kwargs.enable_live_transcription is False
+    assert args.module_kwargs.enable_live_transcription is True
+    assert args.module_kwargs.live_transcription_update_interval == 0.2
     assert args.module_kwargs.llm_backend == "chat-completions"
     assert args.module_kwargs.tts == "minimax"
     assert args.responses_api_language_model_handler_kwargs.model_name == "deepseek-v4-flash"

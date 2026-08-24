@@ -833,6 +833,14 @@ def _make_unit(index: int) -> PipelineUnit:
 
 
 class TestPool:
+    def test_root_and_inspector_probe_are_not_404(self):
+        app = create_app(pool=[_make_unit(0)], stop_event=ThreadingEvent())
+        with TestClient(app) as client:
+            for path in ("/", "/json/version"):
+                response = client.get(path)
+                assert response.status_code == 200
+                assert response.json()["realtime"] == "/v1/realtime"
+
     def test_pool_endpoint_reports_idle_state(self):
         pool = [_make_unit(0), _make_unit(1)]
         app = create_app(pool=pool, stop_event=ThreadingEvent())
@@ -870,3 +878,33 @@ class TestPool:
             data = client.get("/v1/usage").json()
             assert data["errors_by_type"] == {"foo": 2, "bar": 1}
             assert data["total_errors"] == 3
+
+
+def test_log_realtime_event_skips_appends_and_extra_audio_deltas(caplog):
+    import logging
+    from types import SimpleNamespace
+
+    from speech_to_speech.api.openai_realtime.transports import log_realtime_event
+
+    caplog.set_level(logging.INFO)
+    log_realtime_event("in", {"type": "input_audio_buffer.append"})
+    log_realtime_event(
+        "out",
+        SimpleNamespace(type="response.output_audio.delta", content_index=2, response_id="resp_1"),
+    )
+    log_realtime_event(
+        "out",
+        SimpleNamespace(type="response.output_audio.delta", content_index=0, response_id="resp_1"),
+    )
+    log_realtime_event(
+        "out",
+        SimpleNamespace(
+            type="conversation.item.input_audio_transcription.completed",
+            model_dump=lambda: {"item_id": "item_u1", "transcript": "hello"},
+        ),
+    )
+    text = caplog.text
+    assert "input_audio_buffer.append" not in text
+    assert text.count("response.output_audio.delta") == 1
+    assert "transcription.completed" in text
+    assert "hello" in text
