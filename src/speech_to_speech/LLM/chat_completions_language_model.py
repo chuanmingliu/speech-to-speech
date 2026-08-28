@@ -38,6 +38,7 @@ from speech_to_speech.LLM.compaction_prompt import CompactGenerateFn
 from speech_to_speech.utils.utils import _generate_id
 
 logger = logging.getLogger(__name__)
+_IMAGE_OMITTED_TEXT = "[Image omitted: this language model does not support image input.]"
 
 
 def _log_prompt_cache_usage(usage: Any) -> None:
@@ -173,7 +174,12 @@ class ChatCompletionsApiModelHandler(BaseOpenAICompatibleHandler):
         return cast("ChatCompletionContentPartParam", part)
 
     @classmethod
-    def _chat_messages(cls, chat: Chat) -> list[dict[str, Any]]:
+    def _chat_messages(
+        cls,
+        chat: Chat,
+        *,
+        include_images: bool = True,
+    ) -> list[dict[str, Any]]:
         """Serialise the chat for the Chat Completions API.
 
         ``Chat.to_transformers_chat`` targets HuggingFace ``apply_chat_template``,
@@ -183,6 +189,7 @@ class ChatCompletionsApiModelHandler(BaseOpenAICompatibleHandler):
         ``image_url`` shape rather than the Realtime ``input_text`` /
         ``input_image`` shape.
         """
+        normalized: list[dict[str, Any]] = []
         messages = chat.to_transformers_chat()
         for message in messages:
             for tool_call in message.get("tool_calls") or []:
@@ -191,15 +198,36 @@ class ChatCompletionsApiModelHandler(BaseOpenAICompatibleHandler):
                     fn["arguments"] = json.dumps(fn.get("arguments") or {}, ensure_ascii=False)
             content = message.get("content")
             if isinstance(content, list):
-                message["content"] = [cls._to_chat_content_part(p) for p in content]
+                converted: list[ChatCompletionContentPartParam] = []
+                for part in content:
+                    if part.get("type") == "input_image" and not include_images:
+                        converted.append(
+                            ChatCompletionContentPartTextParam(
+                                type="text",
+                                text=_IMAGE_OMITTED_TEXT,
+                            )
+                        )
+                    else:
+                        converted.append(cls._to_chat_content_part(part))
+                message["content"] = converted
             if message.get("role") == "tool":
                 message.pop("name", None)
-        return messages
+            if message.get("role") == "user" and not message.get("content"):
+                continue
+            normalized.append(message)
+        return normalized
 
     # ── base hooks ──────────────────────────────────────────────────────────--
 
     def _serialize(self, active_chat: Chat) -> list[dict[str, Any]]:
-        return self._chat_messages(active_chat)
+        image_count = len(active_chat.image_message_ids())
+        if image_count and not self.supports_images:
+            logger.warning(
+                "Omitting image input from %d message(s): model %s is text-only",
+                image_count,
+                self.model_name,
+            )
+        return self._chat_messages(active_chat, include_images=self.supports_images)
 
     def _build_optional_kwargs(self, req_tools: Any, req_tool_choice: Any) -> dict[str, Any]:
         optional_kwargs: dict[str, Any] = {}

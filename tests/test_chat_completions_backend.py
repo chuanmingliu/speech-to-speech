@@ -215,6 +215,7 @@ def test_setup_maps_responses_api_profile_and_deepseek_key(monkeypatch):
     assert captured["base_url"] == "https://api.deepseek.com"
     assert handler.stream is True
     assert handler._extra_body == {"thinking": {"type": "disabled"}}
+    assert handler.supports_images is False
     assert http_options["limits"].keepalive_expiry == 123
 
 
@@ -391,6 +392,31 @@ def test_chat_messages_converts_image_and_text_parts_to_chat_shape():
     assert parts["image_url"]["image_url"] == {"url": "https://example.com/img.png", "detail": "auto"}
     # No Realtime-shaped parts leak through.
     assert all(p["type"] not in ("input_text", "input_image") for p in user["content"])
+
+
+def test_chat_messages_replace_images_for_text_only_provider():
+    chat = Chat(10)
+    chat.add_item(
+        RealtimeConversationItemUserMessage(
+            type="message",
+            role="user",
+            content=[
+                UserContent(type="input_text", text="What is this?"),
+                UserContent(type="input_image", image_url="https://example.com/img.png", detail="auto"),
+            ],
+        )
+    )
+
+    messages = ChatCompletionsApiModelHandler._chat_messages(chat, include_images=False)
+
+    user = [message for message in messages if message.get("role") == "user"][0]
+    assert user["content"] == [
+        {"type": "text", "text": "What is this?"},
+        {
+            "type": "text",
+            "text": "[Image omitted: this language model does not support image input.]",
+        },
+    ]
 
 
 # ── Streaming / non-streaming parse tests ─────────────────────────────────────
@@ -684,6 +710,32 @@ def test_generation_error_emits_failed_end_of_response():
     text, tools, usage, chat, end = _drive(h)
     assert end is not None and end.error is not None
     assert "kaboom" in end.error
+
+
+def test_generation_error_strips_consumed_images_from_following_turns():
+    h = _make_handler(stream=True)
+    chat = Chat(10)
+    image_message = chat.add_item(
+        RealtimeConversationItemUserMessage(
+            type="message",
+            role="user",
+            content=[
+                UserContent(type="input_text", text="Remember this image."),
+                UserContent(type="input_image", image_url="https://example.com/img.png"),
+            ],
+        )
+    )
+
+    def fail(**kwargs):
+        raise RuntimeError("provider rejected request")
+
+    h.client.chat.completions.create = fail
+    _text, _tools, _usage, returned_chat, end = _drive(h, chat=chat)
+
+    assert end is not None and end.error is not None
+    persisted = next(item for item in returned_chat.buffer if item.id == image_message.id)
+    assert all(part.type != "input_image" for part in persisted.content)
+    assert persisted.content[0].text == "Remember this image."
 
 
 # ── Out-of-band (conversation="none") responses ───────────────────────────────

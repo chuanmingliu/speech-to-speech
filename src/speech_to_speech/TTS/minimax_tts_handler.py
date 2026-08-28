@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import unicodedata
 import wave
 from collections import OrderedDict
 from collections.abc import Callable
@@ -52,6 +53,19 @@ def _env_float(name: str, default: float) -> float:
         return float(raw)
     except ValueError as exc:
         raise ValueError(f"{name} must be a number, got {raw!r}.") from exc
+
+
+def _has_speakable_content(text: str) -> bool:
+    """Return True when text contains at least one letter or digit to pronounce.
+
+    MiniMax accepts punctuation-only ``task_continue`` payloads and returns
+    ``is_final`` with empty audio; treat those as silent instead of errors.
+    """
+    for char in text:
+        category = unicodedata.category(char)
+        if category.startswith(("L", "N")):
+            return True
+    return False
 
 
 def _http_endpoint(endpoint: str) -> str:
@@ -642,7 +656,12 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
                 self._close_websocket_session_locked()
             return
         if not got_audio:
-            raise RuntimeError("MiniMax TTS WebSocket response did not contain audio data.")
+            # Punctuation-only or pause-only text can complete with empty audio.
+            logger.info(
+                "MiniMax TTS returned no audio for %r; treating as silent",
+                text if len(text) <= 80 else f"{text[:80]}…",
+            )
+            return
         if leftover_hex:
             raise ValueError("MiniMax TTS WebSocket returned incomplete hex audio.")
         yield from self._emit_pcm(pending, generation, pad=True)
@@ -707,7 +726,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         for chunk in producer:
             chunks.append(self._chunk_bytes(chunk))
             yield chunk
-        if not self._is_cancelled(generation):
+        if chunks and not self._is_cancelled(generation):
             self._cache_put(key, chunks)
 
     def process(self, tts_input: TTSIn) -> Iterator[TTSOut]:
@@ -737,6 +756,9 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         generation = self.cancel_scope.generation if self.cancel_scope else None
         text = tts_input.text.strip()
         if not text:
+            return
+        if not _has_speakable_content(text):
+            logger.info("Skipping MiniMax TTS for non-speech text: %r", text)
             return
         cache_key = self._cache_key(text)
         cached = self._cache_get(cache_key)

@@ -143,6 +143,7 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
         speculative_turns: SpeculativeTurnTracker | None = None,
         disable_thinking: bool = True,
         reasoning_effort: Optional[str] = None,
+        supports_images: Optional[bool] = None,
         request_timeout_s: float = 20.0,
         stream_batch_sentences: int = 3,
         enable_lang_prompt: bool = False,
@@ -178,6 +179,11 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
             extra=_kwargs,
         )
         self.stream = stream
+        self.supports_images = (
+            not self._is_deepseek(base_url)
+            if supports_images is None
+            else bool(supports_images)
+        )
         self.connection_keepalive_s = float(
             _kwargs.get("responses_api_connection_keepalive_s", DEFAULT_CONNECTION_KEEPALIVE_S)
         )
@@ -681,6 +687,13 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
                 except Exception:
                     pass
 
+        if not is_out_of_band(turn.response):
+            # Images are one-turn inputs. Remove exactly the image-bearing
+            # messages captured in this request even when the provider rejects
+            # or the response is cancelled; otherwise one bad image poisons
+            # every later text-only turn.
+            original_chat.strip_images(consumed_image_ids)
+
         if (
             error_message is None
             and not self._generation_is_stale(turn.gen)
@@ -693,7 +706,6 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
                 # written eagerly in _record_tool_call; only trailing items remain.
                 for item in state.pending:
                     original_chat.add_item(item)
-                original_chat.strip_images(consumed_image_ids)
                 original_chat.trim_if_needed(self.compactor)
             if state.input_tokens or state.output_tokens:
                 yield TokenUsage(

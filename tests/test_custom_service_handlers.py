@@ -821,6 +821,36 @@ def test_minimax_tts_emits_end_of_response_sentinel():
     assert list(handler.process(EndOfResponse())) == [AUDIO_RESPONSE_DONE]
 
 
+def test_minimax_tts_skips_punctuation_only_text(monkeypatch):
+    websocket = FakeWebSocket(_ws_messages(_ws_event(np.arange(16, dtype=np.int16))))
+    handler = _minimax_handler(FakeHTTPClient(), websocket=websocket)
+    monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *args, **kwargs: None)
+
+    assert list(handler.process(TTSInput(text="…"))) == []
+    assert list(handler.process(TTSInput(text="..."))) == []
+    assert websocket.sent == []
+
+
+def test_minimax_tts_treats_empty_provider_audio_as_silent(monkeypatch):
+    websocket = FakeWebSocket(
+        _ws_messages(
+            {
+                "event": "task_continued",
+                "data": {"audio": ""},
+                "is_final": True,
+                "base_resp": {"status_code": 0, "status_msg": "success"},
+                "extra_info": {"audio_length": 0, "word_count": 0},
+            }
+        )
+    )
+    handler = _minimax_handler(FakeHTTPClient(), websocket=websocket)
+    monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *args, **kwargs: None)
+
+    # Speakable enough to reach the provider, but MiniMax may still return silence.
+    assert list(handler.process(TTSInput(text="A"))) == []
+    assert [message["event"] for message in websocket.sent] == ["task_start", "task_continue"]
+
+
 def test_minimax_tts_surfaces_provider_errors():
     websocket = FakeWebSocket(
         _ws_messages(
@@ -969,7 +999,7 @@ def test_custom_service_json_profile_selects_all_three_providers():
     assert args.responses_api_language_model_handler_kwargs.chat_size == 8
     assert args.responses_api_language_model_handler_kwargs.compact_history is False
     assert args.responses_api_language_model_handler_kwargs.stream_batch_sentences == 1
-    assert args.minimax_tts_handler_kwargs.minimax_tts_speed == 1.0
+    assert args.minimax_tts_handler_kwargs.minimax_tts_speed == 1.1
     assert args.vad_handler_kwargs.speculative_reopen_ms == 250
     assert args.vad_handler_kwargs.speech_pad_ms == 80
 
