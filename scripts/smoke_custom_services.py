@@ -125,7 +125,7 @@ def smoke_minimax(text: str, output_path: Path) -> int:
         wav_file.setsampwidth(2)
         wav_file.setframerate(16000)
         wav_file.writeframes(audio.tobytes())
-    print(f"MiniMax TTS: OK ({len(audio) / 16000:.2f}s audio, saved to {output_path})")
+    print(f"MiniMax TTS (WebSocket): OK ({len(audio) / 16000:.2f}s audio, saved to {output_path})")
     return len(audio)
 
 

@@ -43,11 +43,12 @@ Work landed in three passes, then a review pass.
 
 **MiniMax streaming TTS** (`src/speech_to_speech/TTS/minimax_tts_handler.py`)
 
-- Default is HTTP SSE (`stream=true`), hex **PCM** at 16 kHz, not a full WAV.
-- Incremental `status=1` frames play immediately; aggregated `status=2` is skipped if incrementals already played.
-- `MINIMAX_TTS_STREAM=false` keeps the old one-shot WAV path.
-- Cancellation is checked while reading the stream, not only after the HTTP body.
-- TLS warmup on setup (`HEAD` to the MiniMax origin).
+- Default is the official T2A WebSocket protocol, with hex **PCM** at 16 kHz.
+- One `task_start` is kept open and reused for sequential `task_continue` sentences.
+- `MINIMAX_TTS_STREAM=false` keeps the HTTP one-shot WAV fallback.
+- Cancellation closes the active task so unread audio cannot enter the next response.
+- WebSocket connection + task handshake are completed before user text reaches TTS.
+- Hidden `MINIMAX_TTS_MODEL_WARMUP_TEXT` synthesis primes the model and exact-text cache without playback.
 - First frame is yielded even if it is shorter than 512 samples.
 
 **LLM sentence flush** (`src/speech_to_speech/LLM/utils.py` and both LLM handlers)
@@ -102,7 +103,7 @@ Browser mic (16 kHz PCM)
       fallback: SentenceRecognition + silence prefetch
   → DeepSeek chat-completions (stream=true)
       first sentence flushed on 。 / . / ！ / ?
-  → MiniMax T2A SSE (hex PCM)
+  → MiniMax T2A WebSocket (persistent task, hex PCM)
       first audio frame plays immediately
   → Demo playback worklet
 ```
@@ -118,26 +119,46 @@ Useful log lines:
 
 ## Expected latency change
 
-Not a live stopwatch report (no timed spoken-turn benchmark was recorded). Qualitatively:
+Qualitative stage changes:
 
 | Wait | Before | After |
 |---|---|---|
 | After user stops → ASR done | Full SentenceRecognition RTT | Mostly already done (streamed while speaking) |
 | ASR done → first TTS request | Whole Chinese reply, or 3 English sentences | First sentence |
-| TTS request → first audio | Full WAV | First PCM SSE frame |
+| TTS request → first audio | Full WAV | First PCM WebSocket frame |
 | Extra audio on every ASR call | 500 ms pad | 80 ms pad |
 
 Remaining first-audio wait is mostly **DeepSeek time-to-first-token**, plus MiniMax’s first frame.
+
+### MiniMax transport estimate (2026-08-28)
+
+Direct live-provider samples on this machine:
+
+- Cold WebSocket connection + `task_start`: **0.785 s** to first audio.
+- Reused WebSocket task + `task_continue`: **0.164 s** to first audio.
+- Earlier HTTP/SSE observations: about **0.567 s** after idle and **~0.19 s**
+  when already warm.
+
+The transport change therefore depends on prewarming. Opening a WebSocket on
+the critical path is slower; maintaining one task per idle pipeline lane is
+estimated to save roughly **0.40 s** on an idle first turn and **20–50 ms** on
+an already-warm turn. Three distinct synthetic turns with maintained sockets
+and the production voice prompt measured **1.041 / 1.177 / 1.271 s** from
+server VAD speech-stop to first audio (**1.177 s median**). ASR finalization was
+0.127–0.171 s; the first complete LLM sentence arrived in 0.854–1.064 s; the
+uncached MiniMax first frame added about 0.19–0.21 s. DeepSeek reported 256
+prompt-cache-hit tokens on each turn. These are directional local samples, not
+provider latency guarantees.
 
 ## Tests and review
 
 | Check | Result |
 |---|---|
-| Full pytest (after streaming ASR) | **636 passed** |
-| After review fixes (targeted) | **63 passed** (custom handlers / launcher / LLM utils / responses) |
-| Ruff | Clean on touched files |
+| Full pytest (current WebSocket + latency changes) | **652 passed** |
+| Targeted default-prompt / LLM tests | **186 passed** |
+| Ruff | Clean across `src`, `scripts`, and `tests` |
 | Code review | 2 bugs found and fixed (dead WS session; `finish()` hang) |
-| Live smoke of one full spoken turn | **Not** formally scored; demo + providers did start |
+| Live synthetic turns | **1.177 s median speech-stop → first audio** |
 
 Checked and left as-is:
 

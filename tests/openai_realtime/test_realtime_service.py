@@ -74,6 +74,14 @@ def _make_audio_append(audio_b64: str) -> InputAudioBufferAppendEvent:
 
 
 class TestConnectionLifecycle:
+    def test_register_applies_default_instructions(self):
+        service = RealtimeService(default_instructions="Keep answers short.")
+
+        sid = service.register()
+
+        assert service._state(sid).runtime_config.session.instructions == "Keep answers short."
+        service.unregister(sid)
+
     def test_register_creates_session_id(self, service):
         sid = service.register()
         assert sid.startswith("session_")

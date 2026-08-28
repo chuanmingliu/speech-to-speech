@@ -170,7 +170,7 @@ This installs the package in editable mode and makes the `speech-to-speech` CLI 
 | TTS | [Pocket TTS](https://github.com/kyutai-labs/pocket-tts) | CPU / CUDA | `pocket` |
 | TTS | [ChatTTS](https://github.com/2noise/ChatTTS) | CUDA / CPU | `chattts` |
 | TTS | [MMS TTS](https://huggingface.co/docs/transformers/model_doc/mms) | CUDA / CPU | `facebook-mms` |
-| TTS | [MiniMax T2A](https://platform.minimax.io/docs/api-reference/speech-t2a-http) | hosted API | built-in |
+| TTS | [MiniMax T2A WebSocket](https://platform.minimax.io/docs/api-reference/speech-t2a-websocket) | hosted API | built-in |
 
 Select implementations with `--stt`, `--llm_backend`, and `--tts`. Run `speech-to-speech -h` for exact values and backend-specific flags.
 
@@ -196,11 +196,32 @@ speech-to-speech configs/tencent-deepseek-minimax.json
 The server listens at `ws://localhost:8765/v1/realtime`. Set
 `TENCENT_ASR_APP_ID` to stream microphone audio into Tencent's realtime
 WebSocket ASR while the user is still speaking. Without it, Tencent
-`SentenceRecognition` runs on VAD-finalized utterances. MiniMax streams hex-encoded 16 kHz
-mono PCM over T2A HTTP SSE so playback can start before the sentence finishes.
-Set `MINIMAX_TTS_STREAM=false` to wait for a single WAV instead. Set
-`MINIMAX_TTS_ENDPOINT=https://api.minimaxi.com/v1/t2a_v2` for China-platform
-keys or `https://api.minimax.io/v1/t2a_v2` for global-platform keys.
+`SentenceRecognition` runs on VAD-finalized utterances. MiniMax keeps one T2A
+WebSocket task open per pipeline lane and streams hex-encoded 16 kHz mono PCM,
+so later sentences avoid another connection and `task_start` handshake.
+Realtime ASR connection setup uses a 1.5-second fail-fast timeout; after one
+failure, that turn switches to prefetched `SentenceRecognition` instead of
+paying for a second WebSocket timeout.
+Set `MINIMAX_TTS_STREAM=false` to use the HTTP one-shot WAV fallback. For
+China-platform keys, use
+`MINIMAX_TTS_WEBSOCKET_ENDPOINT=wss://api.minimaxi.com/ws/v1/t2a_v2`; for
+global-platform keys, use `wss://api.minimax.io/ws/v1/t2a_v2`.
+The checked-in profile also disables DeepSeek's default thinking mode, keeps
+provider connections warm, seeds DeepSeek's prefix/KV cache with the same
+voice-system prompt plus an empty user message, shortens the speculative turn
+gate, and bounds conversation history. MiniMax starts its persistent WebSocket
+task before speech reaches TTS and runs a hidden text synthesis (which may be
+billed). Its discarded PCM primes the exact-text cache; set
+`MINIMAX_TTS_MODEL_WARMUP_TEXT` to a common greeting if that greeting should be
+available immediately. Other repeated sentence audio is cached in process.
+Idle provider state is
+refreshed in the background when a session connects or speech starts. Idle
+telephony pool lanes are maintained every 30 seconds, recycling MiniMax tasks
+before the provider's 120-second idle close; set
+`PROVIDER_CONNECTION_MAINTENANCE_S=0` to disable this. Set
+`MINIMAX_TTS_MODEL_WARMUP=false` to keep only the non-billable WebSocket
+handshake, `MINIMAX_TTS_WARMUP=false` to disable that preconnection too, or
+`MINIMAX_TTS_CACHE_MAX_MB=0` to disable the cache.
 
 For a live provider smoke test:
 
@@ -208,6 +229,11 @@ For a live provider smoke test:
 set -a && source .env.local && set +a
 uv run --extra tencent-asr python scripts/smoke_custom_services.py
 ```
+
+For repeatable load measurement, see the
+[100-case synthetic conversation benchmark](benchmarks/README.md). Corpus
+generation and validation are offline; its explicit `run` command records
+per-turn ASR, LLM-output, TTS, and end-to-end latency.
 
 To launch both the backend and the bundled browser voice app:
 

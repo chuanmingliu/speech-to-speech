@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import time
 import uuid
 from collections.abc import Callable
@@ -17,6 +18,8 @@ REALTIME_HOST_PATH = "asr.cloud.tencent.com/asr/v2"
 PCM_VOICE_FORMAT = 1
 # 200 ms of 16 kHz mono PCM16.
 PCM_FRAME_BYTES = 6400
+DEFAULT_OPEN_TIMEOUT_S = 1.5
+DEFAULT_FINAL_TIMEOUT_S = 1.0
 
 
 def build_realtime_url(
@@ -64,7 +67,8 @@ def build_realtime_url(
 def _default_connect(url: str) -> Any:
     from websockets.sync.client import connect
 
-    return connect(url, open_timeout=5.0, close_timeout=2.0)
+    open_timeout_s = float(os.getenv("TENCENT_ASR_OPEN_TIMEOUT_S", str(DEFAULT_OPEN_TIMEOUT_S)))
+    return connect(url, open_timeout=open_timeout_s, close_timeout=1.0)
 
 
 class TencentRealtimeASRSession:
@@ -89,15 +93,16 @@ class TencentRealtimeASRSession:
             raise RuntimeError("Tencent realtime ASR handshake timed out.")
         self._handle(handshake)
 
-    def send_pcm(self, pcm: bytes) -> str:
+    def send_pcm(self, pcm: bytes, *, drain_timeout_s: float = 0.05) -> str:
         if self._ws is None:
             raise RuntimeError("Tencent realtime ASR session is not started.")
         if pcm:
             self._ws.send(pcm)
-        self._drain(0.05)
+        if drain_timeout_s > 0:
+            self._drain(drain_timeout_s)
         return self.current_text()
 
-    def finish(self, timeout_s: float = 2.0) -> str:
+    def finish(self, timeout_s: float = DEFAULT_FINAL_TIMEOUT_S) -> str:
         if self._ws is None:
             return self.current_text()
         self._ws.send(json.dumps({"type": "end"}))

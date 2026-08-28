@@ -33,6 +33,7 @@ from speech_to_speech.LLM.chat_completions_language_model import (
     _to_chat_tool_choice,
     _to_chat_tools,
 )
+from speech_to_speech.LLM.voice_prompt import build_voice_system_prompt
 from speech_to_speech.pipeline.messages import (
     EndOfResponse,
     GenerateResponseRequest,
@@ -80,9 +81,19 @@ class _FakeChat:
         self.completions = _FakeCompletions()
 
 
+class _FakeModels:
+    def __init__(self):
+        self.calls = 0
+
+    def list(self):
+        self.calls += 1
+        return SimpleNamespace(data=[])
+
+
 class _FakeClient:
     def __init__(self, *a, **k):
         self.chat = _FakeChat()
+        self.models = _FakeModels()
         self.last_options = None
 
     def with_options(self, **kwargs):
@@ -104,6 +115,7 @@ def _make_handler(stream=True):
                 base_url="http://fake/v1",
                 api_key="k",
                 stream=stream,
+                init_chat_prompt="Keep answers short.",
                 disable_thinking=True,
                 compact_history=False,
             ),
@@ -117,16 +129,69 @@ def test_warmup_uses_request_scoped_sdk_retries():
     handler = _make_handler()
 
     assert handler.client.last_options == {"max_retries": base_mod.WARMUP_MAX_RETRIES}
+    warmup = handler.client.chat.completions.last_kwargs
+    assert warmup["max_tokens"] == 1
+    assert warmup["messages"] == [
+        {
+            "role": "system",
+            "content": build_voice_system_prompt("Keep answers short."),
+        },
+        {"role": "user", "content": ""},
+    ]
+
+
+def test_prompt_cache_usage_is_logged(caplog):
+    usage = SimpleNamespace(
+        prompt_cache_hit_tokens=256,
+        prompt_cache_miss_tokens=66,
+        model_extra={},
+    )
+
+    with caplog.at_level("INFO"):
+        ccm._log_prompt_cache_usage(usage)
+
+    assert "LLM prompt cache tokens (hit=256 miss=66)" in caplog.text
+
+
+def test_warmup_system_prompt_matches_real_voice_turn():
+    handler = _make_handler()
+    chat = Chat(10)
+
+    handler._apply_config(chat, "Keep answers short.", wants_audio=True)
+
+    assert handler._chat_messages(chat)[0] == {
+        "role": "system",
+        "content": handler.warmup_system_prompt,
+    }
+
+
+def test_idle_connection_prewarm_is_non_generating_and_rate_limited():
+    handler = _make_handler()
+    completion_calls = handler.client.chat.completions.last_kwargs
+    handler._last_connection_use_s = 0
+
+    handler.prewarm()
+    handler.prewarm()
+
+    assert handler.client.models.calls == 1
+    assert handler.client.chat.completions.last_kwargs is completion_calls
+    assert handler.client.last_options["max_retries"] == 0
 
 
 def test_setup_maps_responses_api_profile_and_deepseek_key(monkeypatch):
     captured: dict = {}
+    http_options: dict = {}
 
     class CaptureClient(_FakeClient):
         def __init__(self, *a, **k):
             captured.update(k)
             super().__init__(*a, **k)
 
+    monkeypatch.setattr(
+        base_mod,
+        "DefaultHttpxClient",
+        lambda **kwargs: http_options.update(kwargs) or SimpleNamespace(close=lambda: None),
+    )
     monkeypatch.setattr(base_mod, "OpenAI", CaptureClient)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("DEEPSEEK_API_BASE", raising=False)
@@ -140,7 +205,8 @@ def test_setup_maps_responses_api_profile_and_deepseek_key(monkeypatch):
             model_name="deepseek-v4-flash",
             responses_api_base_url="https://api.deepseek.com",
             responses_api_stream=True,
-            responses_api_disable_thinking=False,
+            responses_api_disable_thinking=True,
+            responses_api_connection_keepalive_s=123,
             compact_history=False,
         ),
     )
@@ -148,7 +214,8 @@ def test_setup_maps_responses_api_profile_and_deepseek_key(monkeypatch):
     assert captured["api_key"] == "ds-from-env"
     assert captured["base_url"] == "https://api.deepseek.com"
     assert handler.stream is True
-    assert handler._extra_body is None
+    assert handler._extra_body == {"thinking": {"type": "disabled"}}
+    assert http_options["limits"].keepalive_expiry == 123
 
 
 def test_setup_requires_hosted_or_openai_key(monkeypatch):
@@ -244,6 +311,12 @@ def test_build_extra_body_variants():
     f = ChatCompletionsApiModelHandler._build_extra_body
     assert f("http://x/v1", True, None) == {"chat_template_kwargs": {"enable_thinking": False}}
     assert f("http://x/v1", True, "none") == {"reasoning_effort": "none"}  # explicit effort wins
+    assert f("https://api.deepseek.com", True, None) == {"thinking": {"type": "disabled"}}
+    assert f("https://api.deepseek.com/v1", False, "low") == {
+        "thinking": {"type": "enabled"},
+        "reasoning_effort": "low",
+    }
+    assert f("https://api.deepseek.com", False, "none") == {"thinking": {"type": "disabled"}}
     assert f("https://api.openai.com/v1", True, "none") is None  # official OpenAI: no extra_body
     assert f("https://api.openai.com/v1/", True, "none") is None  # trailing slash still official
     assert f("http://x/v1", True, "") == {"chat_template_kwargs": {"enable_thinking": False}}  # empty effort ignored

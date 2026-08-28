@@ -538,15 +538,17 @@ def _build_realtime_pipeline_unit(
         vars(kw)["speculative_turns"] = speculative_turns
 
     if module_kwargs.llm_backend in ("responses-api", "chat-completions"):
-        chat_size = vars(responses_api_kw).get("chat_size", 10)
+        llm_settings = vars(responses_api_kw)
     else:
-        chat_size = vars(lm_kw).get("chat_size", 10)
+        llm_settings = vars(lm_kw)
+    chat_size = llm_settings.get("chat_size", 10)
 
     service = RealtimeService(
         text_prompt_queue=text_prompt_queue,
         should_listen=should_listen,
         chat_size=chat_size,
         speculative_turns=speculative_turns,
+        default_instructions=llm_settings.get("init_chat_prompt"),
     )
 
     if module_kwargs.enable_live_transcription:

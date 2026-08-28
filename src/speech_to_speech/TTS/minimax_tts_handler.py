@@ -1,26 +1,40 @@
 from __future__ import annotations
 
 import io
-import json
 import logging
 import os
 import wave
-from threading import Event
+from collections import OrderedDict
+from collections.abc import Callable
+from threading import Event, Lock, RLock
 from time import perf_counter
 from typing import Any, Iterator
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import numpy as np
 from rich.console import Console
+from websockets.exceptions import ConnectionClosed
 
 from speech_to_speech.baseHandler import BaseHandler
 from speech_to_speech.pipeline.cancel_scope import CancelScope
 from speech_to_speech.pipeline.handler_types import TTSIn, TTSOut
 from speech_to_speech.pipeline.messages import AUDIO_RESPONSE_DONE, EndOfResponse, TTSInput
 from speech_to_speech.pipeline.speculative_turns import SpeculativeTurnTracker
+from speech_to_speech.TTS.minimax_websocket import (
+    DEFAULT_OPEN_TIMEOUT_S,
+    MiniMaxWebSocketSession,
+)
 
 logger = logging.getLogger(__name__)
 console = Console()
+
+_DEFAULT_CACHE_MB = 32.0
+_DEFAULT_KEEPALIVE_S = 300.0
+_WARMUP_TIMEOUT_S = 5.0
+_CONNECTION_PROBE_INTERVAL_S = 30.0
+_WEBSOCKET_MAX_IDLE_S = 90.0
+_DEFAULT_MODEL_WARMUP_TEXT = "Hi."
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -30,12 +44,78 @@ def _env_flag(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number, got {raw!r}.") from exc
+
+
+def _http_endpoint(endpoint: str) -> str:
+    parts = urlsplit(endpoint)
+    if parts.scheme not in {"ws", "wss"}:
+        return endpoint
+    path = parts.path.replace("/ws/v1/t2a_v2", "/v1/t2a_v2")
+    scheme = "https" if parts.scheme == "wss" else "http"
+    return urlunsplit((scheme, parts.netloc, path, parts.query, parts.fragment))
+
+
+def _websocket_endpoint(endpoint: str) -> str:
+    parts = urlsplit(endpoint)
+    if parts.scheme in {"ws", "wss"}:
+        return endpoint
+    if parts.scheme not in {"http", "https"}:
+        raise ValueError("MiniMax TTS endpoint must use http(s) or ws(s).")
+    path = parts.path.replace("/v1/t2a_v2", "/ws/v1/t2a_v2")
+    scheme = "wss" if parts.scheme == "https" else "ws"
+    return urlunsplit((scheme, parts.netloc, path, parts.query, parts.fragment))
+
+
+class _AudioLRUCache:
+    """Thread-safe process cache shared by telephony pipeline lanes."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._bytes = 0
+        self._items: OrderedDict[tuple[Any, ...], tuple[bytes, ...]] = OrderedDict()
+
+    def get(self, key: tuple[Any, ...]) -> tuple[bytes, ...] | None:
+        with self._lock:
+            cached = self._items.pop(key, None)
+            if cached is not None:
+                self._items[key] = cached
+            return cached
+
+    def put(self, key: tuple[Any, ...], chunks: list[bytes], max_bytes: int) -> None:
+        if max_bytes <= 0 or not chunks:
+            return
+        size = sum(len(chunk) for chunk in chunks)
+        if size > max_bytes:
+            return
+        with self._lock:
+            previous = self._items.pop(key, None)
+            if previous is not None:
+                self._bytes -= sum(len(chunk) for chunk in previous)
+            stored = tuple(chunks)
+            self._items[key] = stored
+            self._bytes += size
+            while self._bytes > max_bytes and self._items:
+                _, evicted = self._items.popitem(last=False)
+                self._bytes -= sum(len(chunk) for chunk in evicted)
+
+
+_SHARED_AUDIO_CACHE = _AudioLRUCache()
+
+
 class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
     """MiniMax T2A adapter producing 16 kHz mono PCM16 chunks.
 
-    Streaming is on by default so the first hex PCM frame can be played before
-    the provider finishes the utterance. Set ``MINIMAX_TTS_STREAM=false`` to
-    fall back to a single hex-encoded WAV response.
+    Streaming uses one persistent WebSocket task per pipeline lane, following
+    MiniMax's ``task_start`` / ``task_continue`` protocol. Set
+    ``MINIMAX_TTS_STREAM=false`` to fall back to one HTTP WAV response.
     """
 
     def setup(
@@ -45,6 +125,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         model: str | None = None,
         voice_id: str | None = None,
         endpoint: str | None = None,
+        websocket_endpoint: str | None = None,
         language_boost: str | None = None,
         sample_rate: int = 16000,
         blocksize: int = 512,
@@ -53,6 +134,15 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         cancel_scope: CancelScope | None = None,
         speculative_turns: SpeculativeTurnTracker | None = None,
         client: Any | None = None,
+        websocket_connect: Callable[..., Any] | None = None,
+        websocket_open_timeout_s: float | None = None,
+        websocket_receive_timeout_s: float | None = None,
+        websocket_max_idle_s: float | None = None,
+        connection_keepalive_s: float | None = None,
+        warmup_connection: bool | None = None,
+        warmup_model: bool | None = None,
+        model_warmup_text: str | None = None,
+        cache_max_mb: float | None = None,
     ) -> None:
         self.should_listen = should_listen
         self.cancel_scope = cancel_scope
@@ -60,38 +150,305 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         self.api_key = api_key or os.getenv("MINIMAX_TTS_API_KEY")
         self.model = model or os.getenv("MINIMAX_TTS_MODEL", "speech-2.8-turbo")
         self.voice_id = voice_id or os.getenv("MINIMAX_TTS_VOICE_ID")
-        self.endpoint = endpoint or os.getenv(
+        configured_endpoint = endpoint or os.getenv(
             "MINIMAX_TTS_ENDPOINT",
             "https://api.minimax.io/v1/t2a_v2",
         )
+        self.endpoint = _http_endpoint(configured_endpoint)
+        configured_websocket_endpoint = (
+            websocket_endpoint
+            or os.getenv("MINIMAX_TTS_WEBSOCKET_ENDPOINT")
+            or _websocket_endpoint(configured_endpoint)
+        )
+        self.websocket_endpoint = _websocket_endpoint(configured_websocket_endpoint)
         self.language_boost = language_boost or os.getenv("MINIMAX_TTS_LANGUAGE_BOOST", "auto")
         self.sample_rate = sample_rate
         self.blocksize = blocksize
         self.stream = _env_flag("MINIMAX_TTS_STREAM", True) if stream is None else stream
+        configured_warmup_text = (
+            model_warmup_text
+            if model_warmup_text is not None
+            else os.getenv("MINIMAX_TTS_MODEL_WARMUP_TEXT", _DEFAULT_MODEL_WARMUP_TEXT)
+        )
+        self.model_warmup_text = configured_warmup_text.strip() or _DEFAULT_MODEL_WARMUP_TEXT
 
         if not self.api_key:
             raise ValueError("MiniMax TTS requires MINIMAX_TTS_API_KEY.")
         if not self.voice_id:
             raise ValueError("MiniMax TTS requires MINIMAX_TTS_VOICE_ID.")
 
+        resolved_keepalive_s = (
+            _env_float("MINIMAX_TTS_CONNECTION_KEEPALIVE_S", _DEFAULT_KEEPALIVE_S)
+            if connection_keepalive_s is None
+            else float(connection_keepalive_s)
+        )
+        if resolved_keepalive_s <= 0:
+            raise ValueError("MiniMax TTS connection_keepalive_s must be greater than zero.")
         self.client = client or httpx.Client(
             timeout=httpx.Timeout(request_timeout_s, connect=5.0),
-            limits=httpx.Limits(max_keepalive_connections=8, keepalive_expiry=30.0),
+            limits=httpx.Limits(
+                max_connections=20,
+                max_keepalive_connections=8,
+                keepalive_expiry=resolved_keepalive_s,
+            ),
         )
         self._owns_client = client is None
+        self._websocket_connect = websocket_connect
+        self._owns_websocket_connector = websocket_connect is None
+        self._websocket_open_timeout_s = (
+            _env_float("MINIMAX_TTS_WEBSOCKET_OPEN_TIMEOUT_S", DEFAULT_OPEN_TIMEOUT_S)
+            if websocket_open_timeout_s is None
+            else float(websocket_open_timeout_s)
+        )
+        self._websocket_receive_timeout_s = (
+            _env_float("MINIMAX_TTS_WEBSOCKET_RECEIVE_TIMEOUT_S", request_timeout_s)
+            if websocket_receive_timeout_s is None
+            else float(websocket_receive_timeout_s)
+        )
+        self._websocket_max_idle_s = (
+            _env_float("MINIMAX_TTS_WEBSOCKET_MAX_IDLE_S", _WEBSOCKET_MAX_IDLE_S)
+            if websocket_max_idle_s is None
+            else float(websocket_max_idle_s)
+        )
+        if (
+            self._websocket_open_timeout_s <= 0
+            or self._websocket_receive_timeout_s <= 0
+            or self._websocket_max_idle_s <= 0
+        ):
+            raise ValueError("MiniMax TTS WebSocket timeouts must be greater than zero.")
+        self._websocket_session: MiniMaxWebSocketSession | None = None
+        resolved_cache_mb = (
+            _env_float("MINIMAX_TTS_CACHE_MAX_MB", _DEFAULT_CACHE_MB)
+            if cache_max_mb is None
+            else float(cache_max_mb)
+        )
+        if resolved_cache_mb < 0:
+            raise ValueError("MINIMAX_TTS_CACHE_MAX_MB must be zero or greater.")
+        self._cache_max_bytes = int(resolved_cache_mb * 1024 * 1024)
+        self._audio_cache = _SHARED_AUDIO_CACHE if self._owns_client else _AudioLRUCache()
+        self._connection_probe_lock = RLock()
+        self._last_connection_use_s = 0.0
+        self._last_model_use_s = 0.0
+
+        default_warm = self._owns_client and (not self.stream or self._owns_websocket_connector)
+        should_warm = (
+            _env_flag("MINIMAX_TTS_WARMUP", default_warm)
+            if warmup_connection is None
+            else warmup_connection
+        )
+        self._connection_warmup_enabled = should_warm
+        self._model_warmup_enabled = (
+            _env_flag("MINIMAX_TTS_MODEL_WARMUP", default_warm)
+            if warmup_model is None
+            else warmup_model
+        )
+        if self._model_warmup_enabled:
+            self._warmup_model()
+        elif should_warm:
+            self._warmup_connection()
 
     def _headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "Accept": "text/event-stream" if self.stream else "application/json",
+            "Accept": "application/json",
         }
+
+    def _warmup_connection(self) -> None:
+        """Establish the streaming task, or prime HTTP for one-shot mode."""
+        started_at_s = perf_counter()
+        try:
+            if self.stream:
+                with self._connection_probe_lock:
+                    self._ensure_websocket_session_locked()
+                logger.info(
+                    "MiniMax TTS WebSocket task ready in %.3fs",
+                    perf_counter() - started_at_s,
+                )
+                return
+
+            parts = urlsplit(self.endpoint)
+            parent = parts.path.rsplit("/", 1)[0]
+            endpoint = urlunsplit((parts.scheme, parts.netloc, f"{parent}/get_voice", "", ""))
+            response = self.client.post(
+                endpoint,
+                headers=self._headers(),
+                json={"voice_type": "system"},
+                timeout=_WARMUP_TIMEOUT_S,
+            )
+            response.raise_for_status()
+            body = response.json()
+            if isinstance(body, dict):
+                self._raise_if_failed(body)
+            self._last_connection_use_s = perf_counter()
+            logger.info("MiniMax HTTP connection warmed in %.3fs", self._last_connection_use_s - started_at_s)
+        except Exception as exc:
+            logger.warning("MiniMax TTS connection warmup failed; continuing without it: %s", exc)
+
+    def _warmup_model(self) -> None:
+        """Run hidden synthesis and cache its PCM without sending it to playback."""
+        started_at_s = perf_counter()
+        try:
+            if self.stream:
+                chunks = [
+                    self._chunk_bytes(chunk)
+                    for chunk in self._iter_websocket_pcm(self.model_warmup_text, generation=None)
+                ]
+                self._cache_put(self._cache_key(self.model_warmup_text), chunks)
+            else:
+                response = self.client.post(
+                    self.endpoint,
+                    headers=self._headers(),
+                    json=self._payload(self.model_warmup_text),
+                    timeout=_WARMUP_TIMEOUT_S,
+                )
+                response.raise_for_status()
+                body = response.json()
+                if isinstance(body, dict):
+                    self._raise_if_failed(body)
+            self._last_connection_use_s = perf_counter()
+            self._last_model_use_s = self._last_connection_use_s
+            logger.info("MiniMax TTS model warmed in %.3fs", self._last_model_use_s - started_at_s)
+        except Exception as exc:
+            logger.warning("MiniMax TTS model warmup failed; continuing without it: %s", exc)
+
+    def prewarm(self) -> None:
+        """Refresh idle MiniMax connectivity/model state before a spoken turn."""
+        if not self._connection_warmup_enabled and not self._model_warmup_enabled:
+            return
+        now = perf_counter()
+        connection_stale = self._connection_is_stale(now)
+        model_stale = (
+            self._model_warmup_enabled
+            and now - self._last_model_use_s >= _CONNECTION_PROBE_INTERVAL_S
+        )
+        if not connection_stale and not model_stale:
+            return
+        if not self._connection_probe_lock.acquire(blocking=False):
+            return
+        try:
+            now = perf_counter()
+            connection_stale = self._connection_is_stale(now)
+            if (
+                self._model_warmup_enabled
+                and now - self._last_model_use_s >= _CONNECTION_PROBE_INTERVAL_S
+            ):
+                if connection_stale and self.stream:
+                    self._close_websocket_session_locked()
+                self._warmup_model()
+            elif connection_stale:
+                if self.stream:
+                    self._close_websocket_session_locked()
+                self._warmup_connection()
+        finally:
+            self._connection_probe_lock.release()
+
+    def _connection_is_stale(self, now: float) -> bool:
+        if self.stream:
+            return (
+                self._websocket_session is None
+                or not self._websocket_session.started
+                or now - self._last_connection_use_s >= self._websocket_max_idle_s
+            )
+        return now - self._last_connection_use_s >= _CONNECTION_PROBE_INTERVAL_S
+
+    def maintain_connection(self) -> None:
+        """Keep an idle telephony lane ready without running billable synthesis."""
+        if (
+            not self.stream
+            or (not self._connection_warmup_enabled and not self._model_warmup_enabled)
+            or not self._connection_is_stale(perf_counter())
+            or not self._connection_probe_lock.acquire(blocking=False)
+        ):
+            return
+        try:
+            if not self._connection_is_stale(perf_counter()):
+                return
+            self._close_websocket_session_locked()
+            started_at_s = perf_counter()
+            self._ensure_websocket_session_locked()
+            logger.info(
+                "MiniMax TTS idle WebSocket task refreshed in %.3fs",
+                perf_counter() - started_at_s,
+            )
+        except Exception as exc:
+            self._close_websocket_session_locked()
+            logger.warning("MiniMax TTS idle WebSocket refresh failed: %s", exc)
+        finally:
+            self._connection_probe_lock.release()
+
+    def _task_start_payload(self) -> dict[str, Any]:
+        return {
+            "event": "task_start",
+            "model": self.model,
+            "language_boost": self.language_boost,
+            "voice_setting": {
+                "voice_id": self.voice_id,
+                "speed": 1.0,
+                "vol": 1.0,
+                "pitch": 0,
+                "english_normalization": False,
+            },
+            "audio_setting": {
+                "sample_rate": self.sample_rate,
+                "format": "pcm",
+                "channel": 1,
+            },
+            # MiniMax documents false as the lower-latency segmentation mode.
+            "continuous_sound": False,
+        }
+
+    def _ensure_websocket_session_locked(self) -> MiniMaxWebSocketSession:
+        session = self._websocket_session
+        if session is not None and session.started:
+            return session
+        session = MiniMaxWebSocketSession(
+            endpoint=self.websocket_endpoint,
+            api_key=self.api_key,
+            task_start=self._task_start_payload(),
+            connect=self._websocket_connect,
+            open_timeout_s=self._websocket_open_timeout_s,
+            receive_timeout_s=self._websocket_receive_timeout_s,
+        )
+        session.start()
+        self._websocket_session = session
+        self._last_connection_use_s = perf_counter()
+        return session
+
+    def _close_websocket_session_locked(self, *, graceful: bool = False) -> None:
+        session, self._websocket_session = self._websocket_session, None
+        if session is not None:
+            session.close(graceful=graceful)
+
+    def _cache_key(self, text: str) -> tuple[Any, ...]:
+        return (
+            self.websocket_endpoint if self.stream else self.endpoint,
+            self.model,
+            self.voice_id,
+            self.language_boost,
+            self.sample_rate,
+            self.blocksize,
+            self.stream,
+            text,
+        )
+
+    def _cache_get(self, key: tuple[Any, ...]) -> tuple[bytes, ...] | None:
+        return self._audio_cache.get(key)
+
+    def _cache_put(self, key: tuple[Any, ...], chunks: list[bytes]) -> None:
+        self._audio_cache.put(key, chunks, self._cache_max_bytes)
+
+    @staticmethod
+    def _chunk_bytes(chunk: bytes | np.ndarray) -> bytes:
+        if isinstance(chunk, bytes):
+            return chunk
+        return np.asarray(chunk, dtype="<i2").tobytes()
 
     def _payload(self, text: str) -> dict[str, Any]:
         return {
             "model": self.model,
             "text": text,
-            "stream": self.stream,
+            "stream": False,
             "language_boost": self.language_boost,
             "output_format": "hex",
             "voice_setting": {
@@ -102,7 +459,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             },
             "audio_setting": {
                 "sample_rate": self.sample_rate,
-                "format": "pcm" if self.stream else "wav",
+                "format": "wav",
                 "channel": 1,
             },
         }
@@ -179,40 +536,26 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         return np.frombuffer(raw, dtype="<i2").copy(), leftover_hex
 
     @staticmethod
-    def _parse_sse_event(raw: str) -> dict[str, Any] | None:
-        data_lines: list[str] = []
-        for line in raw.splitlines():
-            if line.startswith("data:"):
-                data_lines.append(line[5:].lstrip())
-        if not data_lines:
-            return None
-        payload = "\n".join(data_lines).strip()
-        if not payload or payload == "[DONE]":
-            return None
-        try:
-            parsed = json.loads(payload)
-        except json.JSONDecodeError as exc:
-            raise ValueError("MiniMax returned an invalid streaming event.") from exc
-        if not isinstance(parsed, dict):
-            raise ValueError("MiniMax streaming event must be a JSON object.")
-        return parsed
+    def _retryable_websocket_error(exc: Exception) -> bool:
+        return isinstance(exc, (ConnectionClosed, ConnectionError, OSError, TimeoutError))
 
-    def _iter_sse_json(self, response: Any) -> Iterator[dict[str, Any]]:
-        iter_text = getattr(response, "iter_text", None)
-        if iter_text is None:
-            raise RuntimeError("MiniMax streaming client does not support iter_text().")
-        buffer = ""
-        for chunk in iter_text():
-            buffer += chunk
-            while "\n\n" in buffer:
-                raw, buffer = buffer.split("\n\n", 1)
-                event = self._parse_sse_event(raw)
-                if event is not None:
-                    yield event
-        if buffer.strip():
-            event = self._parse_sse_event(buffer)
-            if event is not None:
-                yield event
+    def _iter_websocket_audio_hex(self, text: str) -> Iterator[str]:
+        emitted_audio = False
+        for attempt in range(2):
+            with self._connection_probe_lock:
+                try:
+                    session = self._ensure_websocket_session_locked()
+                    for audio_hex in session.synthesize(text):
+                        emitted_audio = True
+                        yield audio_hex
+                    self._last_connection_use_s = perf_counter()
+                    self._last_model_use_s = self._last_connection_use_s
+                    return
+                except Exception as exc:
+                    self._close_websocket_session_locked()
+                    if emitted_audio or attempt or not self._retryable_websocket_error(exc):
+                        raise
+                    logger.info("MiniMax TTS WebSocket was stale; reconnecting once")
 
     def _emit_pcm(self, samples: np.ndarray, generation: int | None, *, pad: bool) -> Iterator[np.ndarray]:
         if samples.size == 0:
@@ -248,6 +591,53 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             tts_input.turn_revision,
         )
 
+    def _iter_websocket_pcm(
+        self,
+        text: str,
+        generation: int | None,
+    ) -> Iterator[np.ndarray]:
+        leftover_hex = ""
+        pending = np.array([], dtype=np.int16)
+        got_audio = False
+        first_audio = True
+
+        for audio_hex in self._iter_websocket_audio_hex(text):
+            if self._is_cancelled(generation):
+                with self._connection_probe_lock:
+                    self._close_websocket_session_locked()
+                logger.info("MiniMax TTS playback cancelled (interruption)")
+                return
+            got_audio = True
+            samples, leftover_hex = self._decode_hex_pcm(audio_hex, leftover_hex)
+            if samples.size == 0:
+                continue
+            pending = np.concatenate((pending, samples)) if pending.size else samples
+            if first_audio:
+                first_audio = False
+                # Don't add one playback-block delay to a short first provider frame.
+                if len(pending) < self.blocksize:
+                    yield np.asarray(pending, dtype=np.int16)
+                    pending = np.array([], dtype=np.int16)
+                    continue
+            emit_upto = len(pending) - (len(pending) % self.blocksize)
+            if emit_upto:
+                yield from self._emit_pcm(pending[:emit_upto], generation, pad=False)
+                pending = pending[emit_upto:]
+                if self._is_cancelled(generation):
+                    with self._connection_probe_lock:
+                        self._close_websocket_session_locked()
+                    return
+
+        if self._is_cancelled(generation):
+            with self._connection_probe_lock:
+                self._close_websocket_session_locked()
+            return
+        if not got_audio:
+            raise RuntimeError("MiniMax TTS WebSocket response did not contain audio data.")
+        if leftover_hex:
+            raise ValueError("MiniMax TTS WebSocket returned incomplete hex audio.")
+        yield from self._emit_pcm(pending, generation, pad=True)
+
     def _synthesize_streaming(
         self,
         text: str,
@@ -255,65 +645,12 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         tts_input: TTSInput,
     ) -> Iterator[np.ndarray]:
         started_at_s = perf_counter()
-        with self.client.stream(
-            "POST",
-            self.endpoint,
-            headers=self._headers(),
-            json=self._payload(text),
-        ) as response:
-            response.raise_for_status()
-            leftover_hex = ""
-            pending = np.array([], dtype=np.int16)
-            got_incremental = False
-            final_audio_hex: str | None = None
-            first_audio = True
-
-            for event in self._iter_sse_json(response):
-                if self._is_cancelled(generation):
-                    logger.info("MiniMax TTS playback cancelled (interruption)")
-                    return
-                self._raise_if_failed(event)
-                data = event.get("data") or {}
-                audio_hex = data.get("audio")
-                status = data.get("status")
-                if not audio_hex:
-                    continue
-                if status == 2:
-                    # Aggregated copy of the whole utterance. Skip while
-                    # incremental frames are already playing.
-                    final_audio_hex = audio_hex
-                    continue
-
-                got_incremental = True
-                samples, leftover_hex = self._decode_hex_pcm(audio_hex, leftover_hex)
-                if samples.size == 0:
-                    continue
-                pending = np.concatenate((pending, samples)) if pending.size else samples
-                if first_audio:
-                    self._log_first_audio_latency(tts_input, started_at_s)
-                    first_audio = False
-                    # Do not wait for a full playback block before the first
-                    # samples leave the handler.
-                    if len(pending) < self.blocksize:
-                        yield np.asarray(pending, dtype=np.int16)
-                        pending = np.array([], dtype=np.int16)
-                        continue
-                emit_upto = len(pending) - (len(pending) % self.blocksize)
-                if emit_upto:
-                    yield from self._emit_pcm(pending[:emit_upto], generation, pad=False)
-                    pending = pending[emit_upto:]
-                    if self._is_cancelled(generation):
-                        return
-
-            if self._is_cancelled(generation):
-                return
-            if not got_incremental:
-                if not final_audio_hex:
-                    raise RuntimeError("MiniMax TTS response did not contain audio data.")
-                pending = self._decode_audio_payload(final_audio_hex)
-                if first_audio and pending.size:
-                    self._log_first_audio_latency(tts_input, started_at_s)
-            yield from self._emit_pcm(pending, generation, pad=True)
+        first_audio = True
+        for chunk in self._iter_websocket_pcm(text, generation):
+            if first_audio:
+                self._log_first_audio_latency(tts_input, started_at_s)
+                first_audio = False
+            yield chunk
 
     def _synthesize_sync(
         self,
@@ -328,6 +665,8 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             json=self._payload(text),
         )
         response.raise_for_status()
+        self._last_connection_use_s = perf_counter()
+        self._last_model_use_s = self._last_connection_use_s
         body = response.json()
         self._raise_if_failed(body)
 
@@ -338,6 +677,29 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         if audio.size:
             self._log_first_audio_latency(tts_input, started_at_s)
         yield from self._emit_pcm(audio, generation, pad=True)
+
+    def _synthesize_and_cache(
+        self,
+        text: str,
+        generation: int | None,
+        tts_input: TTSInput,
+        key: tuple[Any, ...],
+    ) -> Iterator[TTSOut]:
+        producer = (
+            self._synthesize_streaming(text, generation, tts_input)
+            if self.stream
+            else self._synthesize_sync(text, generation, tts_input)
+        )
+        if self._cache_max_bytes <= 0:
+            yield from producer
+            return
+
+        chunks: list[bytes] = []
+        for chunk in producer:
+            chunks.append(self._chunk_bytes(chunk))
+            yield chunk
+        if not self._is_cancelled(generation):
+            self._cache_put(key, chunks)
 
     def process(self, tts_input: TTSIn) -> Iterator[TTSOut]:
         speculative_turns = self.speculative_turns
@@ -367,25 +729,41 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         text = tts_input.text.strip()
         if not text:
             return
+        cache_key = self._cache_key(text)
+        cached = self._cache_get(cache_key)
         console.print(f"[green]ASSISTANT: {text}")
         logger.info(
             "Streaming TTS start (%s, turn=%s rev=%s): %s",
-            "sse" if self.stream else "oneshot",
+            "cache" if cached is not None else ("websocket" if self.stream else "oneshot"),
             tts_input.turn_id,
             tts_input.turn_revision,
             text if len(text) <= 80 else f"{text[:80]}…",
         )
 
-        if self.stream:
-            yield from self._synthesize_streaming(text, generation, tts_input)
+        if cached is not None:
+            started_at_s = perf_counter()
+            logger.info("MiniMax TTS cache hit (%d chunks)", len(cached))
+            if cached:
+                self._log_first_audio_latency(tts_input, started_at_s)
+            for chunk in cached:
+                if self._is_cancelled(generation):
+                    logger.info("MiniMax TTS cached playback cancelled (interruption)")
+                    return
+                yield chunk
         else:
-            yield from self._synthesize_sync(text, generation, tts_input)
+            yield from self._synthesize_and_cache(text, generation, tts_input, cache_key)
         logger.info(
             "Streaming TTS finished (turn=%s rev=%s)",
             tts_input.turn_id,
             tts_input.turn_revision,
         )
 
+    def on_session_end(self) -> None:
+        with self._connection_probe_lock:
+            self._close_websocket_session_locked(graceful=True)
+
     def cleanup(self) -> None:
+        with self._connection_probe_lock:
+            self._close_websocket_session_locked(graceful=True)
         if self._owns_client:
             self.client.close()

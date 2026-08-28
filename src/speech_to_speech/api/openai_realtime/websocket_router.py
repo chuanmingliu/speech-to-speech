@@ -1,10 +1,12 @@
 import asyncio
 import logging
+import os
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from queue import Empty, Queue
 from threading import Event as ThreadingEvent
+from threading import Thread
 from typing import Any, Callable, TypeVar
 
 import numpy as np
@@ -61,6 +63,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 MAX_AUDIO_BATCH_BYTES = 6400
+DEFAULT_CONNECTION_MAINTENANCE_INTERVAL_S = 30.0
 # How long the release path waits for SESSION_END to propagate through the
 # handler chain back to output_queue before warning that the unit is stuck.
 # Tests monkeypatch this to a small value since their fixtures usually skip
@@ -190,6 +193,54 @@ def _clean_unit(unit: PipelineUnit, preserve: Callable[[Any], bool] | None = Non
     unit.response_playing.clear()
     unit.cancel_scope.reset()
     unit.should_listen.set()
+
+
+def _run_prewarm(index: int, handler: Any) -> None:
+    pipeline_log_ctx.set(index)
+    try:
+        handler.prewarm()
+    except Exception:
+        logger.exception("Pipeline %d: %s prewarm failed", index, type(handler).__name__)
+
+
+def _prewarm_unit(unit: PipelineUnit) -> None:
+    """Refresh idle hosted-provider connections without blocking the event loop."""
+    for handler in unit.handlers:
+        if not callable(getattr(handler, "prewarm", None)):
+            continue
+        Thread(
+            target=_run_prewarm,
+            args=(unit.index, handler),
+            name=f"pipeline-{unit.index}-{type(handler).__name__}-prewarm",
+            daemon=True,
+        ).start()
+
+
+def _run_connection_maintenance(index: int, handler: Any) -> None:
+    pipeline_log_ctx.set(index)
+    try:
+        handler.maintain_connection()
+    except Exception:
+        logger.exception(
+            "Pipeline %d: %s connection maintenance failed",
+            index,
+            type(handler).__name__,
+        )
+
+
+def _maintain_idle_unit(unit: PipelineUnit) -> None:
+    """Refresh non-billable provider transports for an unclaimed pool lane."""
+    if unit.session is not None:
+        return
+    for handler in unit.handlers:
+        if not callable(getattr(handler, "maintain_connection", None)):
+            continue
+        Thread(
+            target=_run_connection_maintenance,
+            args=(unit.index, handler),
+            name=f"pipeline-{unit.index}-{type(handler).__name__}-maintenance",
+            daemon=True,
+        ).start()
 
 
 def _to_audio_bytes(chunk: Any) -> bytes:
@@ -406,13 +457,52 @@ async def _dispatch_client_event(
         unit.response_playing.clear()
 
 
-def create_app(pool: list[PipelineUnit], stop_event: ThreadingEvent) -> FastAPI:
+def create_app(
+    pool: list[PipelineUnit],
+    stop_event: ThreadingEvent,
+    *,
+    connection_maintenance_interval_s: float | None = None,
+) -> FastAPI:
+    if connection_maintenance_interval_s is None:
+        raw_interval = os.getenv(
+            "PROVIDER_CONNECTION_MAINTENANCE_S",
+            str(DEFAULT_CONNECTION_MAINTENANCE_INTERVAL_S),
+        )
+        try:
+            connection_maintenance_interval_s = float(raw_interval)
+        except ValueError:
+            logger.warning(
+                "Invalid PROVIDER_CONNECTION_MAINTENANCE_S=%r; using %.0fs",
+                raw_interval,
+                DEFAULT_CONNECTION_MAINTENANCE_INTERVAL_S,
+            )
+            connection_maintenance_interval_s = DEFAULT_CONNECTION_MAINTENANCE_INTERVAL_S
+    connection_maintenance_interval_s = max(0.0, connection_maintenance_interval_s)
+
+    async def _maintain_idle_pool() -> None:
+        assert connection_maintenance_interval_s is not None
+        while not stop_event.is_set():
+            await asyncio.sleep(connection_maintenance_interval_s)
+            for unit in pool:
+                _maintain_idle_unit(unit)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # One send loop per pipeline unit; each polls its own queues and forwards
         # to the websocket currently attached via unit.session.
         send_tasks = [asyncio.create_task(_send_loop_for(unit)) for unit in pool]
+        maintenance_task: asyncio.Task[None] | None = None
+        if connection_maintenance_interval_s > 0:
+            for unit in pool:
+                _maintain_idle_unit(unit)
+            maintenance_task = asyncio.create_task(_maintain_idle_pool())
         yield
+        if maintenance_task is not None:
+            maintenance_task.cancel()
+            try:
+                await maintenance_task
+            except asyncio.CancelledError:
+                pass
         for task in send_tasks:
             task.cancel()
         for task in send_tasks:
@@ -493,6 +583,7 @@ def create_app(pool: list[PipelineUnit], stop_event: ThreadingEvent) -> FastAPI:
             # Defensive: drain edge queues and reset events so stale data from a
             # previous session that survived SESSION_END propagation doesn't leak.
             _clean_unit(unit)
+            _prewarm_unit(unit)
 
             await send_ws_event(ws, unit.service.build_session_created(session_id))
 
@@ -625,6 +716,7 @@ def create_app(pool: list[PipelineUnit], stop_event: ThreadingEvent) -> FastAPI:
             # Defensive: drain edge queues and reset events so stale data from a
             # previous session that survived SESSION_END propagation doesn't leak.
             _clean_unit(unit)
+            _prewarm_unit(unit)
         except Exception as e:  # noqa: BLE001
             logger.error(f"WebRTC call setup failed (pipeline {unit.index}): {type(e).__name__}: {e}")
             # No transport or drain task exists yet, so undoing the claim
@@ -760,6 +852,7 @@ def create_app(pool: list[PipelineUnit], stop_event: ThreadingEvent) -> FastAPI:
                             await transport.send_events(events)
 
                     if is_speech_start and session_id:
+                        _prewarm_unit(unit)
                         active_cfg = unit.service._state(session_id).runtime_config
                         interrupt_enabled = text_msg.interrupt_response and (
                             active_cfg is None or active_cfg.interrupt_response_enabled

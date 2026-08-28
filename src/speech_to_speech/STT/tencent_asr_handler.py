@@ -59,6 +59,7 @@ class TencentASRHandler(BaseSTTHandler):
         self._rt_key: tuple[str | None, int | None] | None = None
         self._rt_sent = 0
         self._last_partial = ""
+        self._rt_failed_key: tuple[str | None, int | None] | None = None
         self._use_realtime = realtime_session_factory is not None or bool(self.app_id)
 
         if client is not None:
@@ -226,7 +227,7 @@ class TencentASRHandler(BaseSTTHandler):
         )
         return session
 
-    def _send_realtime_audio(self, audio: np.ndarray) -> str:
+    def _send_realtime_audio(self, audio: np.ndarray, *, drain_timeout_s: float = 0.05) -> str:
         if self._rt_session is None:
             return ""
         if audio.size <= self._rt_sent:
@@ -236,7 +237,10 @@ class TencentASRHandler(BaseSTTHandler):
         pcm = self._to_pcm16(new_audio)
         text = ""
         for start in range(0, len(pcm), PCM_FRAME_BYTES):
-            text = self._rt_session.send_pcm(pcm[start : start + PCM_FRAME_BYTES])
+            text = self._rt_session.send_pcm(
+                pcm[start : start + PCM_FRAME_BYTES],
+                drain_timeout_s=drain_timeout_s,
+            )
         return text
 
     def _close_realtime(self) -> None:
@@ -274,7 +278,10 @@ class TencentASRHandler(BaseSTTHandler):
         started_at_s = perf_counter()
         try:
             self._ensure_realtime_session(vad_audio)
-            self._send_realtime_audio(audio)
+            # The immediately following end marker causes finish() to drain all
+            # remaining recognition events. Avoid an extra 50 ms receive wait
+            # between the final PCM frame and that marker.
+            self._send_realtime_audio(audio, drain_timeout_s=0.0)
             text = self._rt_session.finish() if self._rt_session is not None else ""
         finally:
             self._close_realtime()
@@ -337,6 +344,15 @@ class TencentASRHandler(BaseSTTHandler):
         )
 
     def process(self, vad_audio: STTIn) -> Iterator[STTOut]:
+        key = (vad_audio.turn_id, vad_audio.turn_revision)
+        if self._rt_failed_key == key:
+            # One failed realtime connection is enough for this turn. Continue
+            # progressive snapshots through the one-shot prefetch path instead
+            # of paying another WebSocket timeout at finalization.
+            yield from self._process_sentence(vad_audio)
+            if vad_audio.mode != "progressive":
+                self._rt_failed_key = None
+            return
         if self._use_realtime:
             try:
                 yield from self._process_realtime(vad_audio)
@@ -344,7 +360,9 @@ class TencentASRHandler(BaseSTTHandler):
             except Exception:
                 self._close_realtime()
                 if vad_audio.mode == "progressive":
+                    self._rt_failed_key = key
                     logger.exception("Tencent realtime ASR progressive update failed")
+                    yield from self._process_sentence(vad_audio)
                     return
                 logger.exception("Tencent realtime ASR failed; falling back to SentenceRecognition")
         yield from self._process_sentence(vad_audio)
@@ -355,8 +373,10 @@ class TencentASRHandler(BaseSTTHandler):
             self._executor.shutdown(wait=False)
             self._executor = None
         self._speculative = None
+        self._rt_failed_key = None
 
     def on_session_end(self) -> None:
         self._close_realtime()
         self._speculative = None
+        self._rt_failed_key = None
         super().on_session_end()

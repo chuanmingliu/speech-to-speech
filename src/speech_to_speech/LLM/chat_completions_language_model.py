@@ -40,6 +40,22 @@ from speech_to_speech.utils.utils import _generate_id
 logger = logging.getLogger(__name__)
 
 
+def _log_prompt_cache_usage(usage: Any) -> None:
+    extra = getattr(usage, "model_extra", None) or {}
+    hit = getattr(usage, "prompt_cache_hit_tokens", None)
+    miss = getattr(usage, "prompt_cache_miss_tokens", None)
+    if hit is None:
+        hit = extra.get("prompt_cache_hit_tokens")
+    if miss is None:
+        miss = extra.get("prompt_cache_miss_tokens")
+    if hit is not None or miss is not None:
+        logger.info(
+            "LLM prompt cache tokens (hit=%s miss=%s)",
+            hit if hit is not None else 0,
+            miss if miss is not None else 0,
+        )
+
+
 def _to_chat_tools(req_tools: Any) -> list[ChatCompletionToolParam] | None:
     """Convert Responses-API function tools to Chat-Completions tool format.
 
@@ -95,12 +111,16 @@ class ChatCompletionsApiModelHandler(BaseOpenAICompatibleHandler):
     def warmup(self) -> None:
         logger.info(f"Warming up {self.__class__.__name__}")
         start = time.time()
+        messages: list[dict[str, str]] = []
+        if self.warmup_system_prompt:
+            messages.append({"role": "system", "content": self.warmup_system_prompt})
+        # Keep the user role boundary identical to a real turn while maximizing
+        # the reusable system-prefix KV cache.
+        messages.append({"role": "user", "content": ""})
         self.client.with_options(max_retries=WARMUP_MAX_RETRIES).chat.completions.create(
             model=self.model_name,
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant"},
-                {"role": "user", "content": "Hello"},
-            ],
+            messages=messages,
+            max_tokens=1,
             extra_body=self._extra_body,
             timeout=self.request_timeout,
         )
@@ -213,6 +233,7 @@ class ChatCompletionsApiModelHandler(BaseOpenAICompatibleHandler):
         for chunk in api_response:
             # Usage-only trailing chunk (choices == []) when include_usage is set.
             if chunk.usage is not None:
+                _log_prompt_cache_usage(chunk.usage)
                 usage = Usage(
                     input_tokens=chunk.usage.prompt_tokens or 0, output_tokens=chunk.usage.completion_tokens or 0
                 )
@@ -245,6 +266,7 @@ class ChatCompletionsApiModelHandler(BaseOpenAICompatibleHandler):
     def _iter_response_events(self, api_response: Any) -> Iterator[ProviderEvent]:
         usage = api_response.usage
         if usage:
+            _log_prompt_cache_usage(usage)
             yield Usage(input_tokens=usage.prompt_tokens or 0, output_tokens=usage.completion_tokens or 0)
         # A valid-but-empty response (e.g. content filter) returns no choices;
         # complete cleanly with no assistant text rather than raising IndexError.

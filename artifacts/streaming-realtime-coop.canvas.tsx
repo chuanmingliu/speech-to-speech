@@ -177,8 +177,8 @@ const CLEAN: Beat[] = [
     },
     tts: {
       who: "SpeculativeTurnTracker + MiniMax",
-      event: "(no wire) commit(t1,0)  ·  POST /v1/t2a_v2",
-      detail: "Commit locks reopen. One HTTP SSE per TTSInput, not the official T2A WebSocket.",
+      event: "(no wire) commit(t1,0)  ·  task_continue",
+      detail: "Commit locks reopen. The prewarmed T2A WebSocket task receives one task_continue per TTSInput.",
     },
     vs: "differ",
     ga: "GA emits response.created when generation starts, then response.output_item.added, content_part.added, and response.output_audio_transcript.delta (token stream), then one .done with the FULL transcript. We skip item/part lifecycle, skip transcript.delta, and fire .done per sentence.",
@@ -193,7 +193,7 @@ const CLEAN: Beat[] = [
     asr: null,
     llm: null,
     tts: {
-      who: "MiniMax SSE → AudioHandler",
+      who: "MiniMax WebSocket → AudioHandler",
       event: "response.output_audio.delta",
       detail: "Hidden hex PCM → base64 PCM16. content_index=0. First frame may be short.",
     },
@@ -203,7 +203,7 @@ const CLEAN: Beat[] = [
   },
   {
     t: "3.85s",
-    title: "Second sentence, new TTS POST",
+    title: "Second sentence, same TTS task",
     hear: "Second subtitle while the first sentence is still playing.",
     caption: "What's the weather in Beijing?",
     spoken: ["It's twenty-two degrees.", "Want the weekend forecast?"],
@@ -215,8 +215,8 @@ const CLEAN: Beat[] = [
     },
     tts: {
       who: "MiniMax",
-      event: "(no wire) new HTTP stream",
-      detail: "One HTTP connection per sentence. Not task_continue on a T2A WebSocket.",
+      event: "(no wire) task_continue",
+      detail: "The same persistent WebSocket task synthesizes the next sentence without connect or task_start.",
     },
     vs: "differ",
     ga: "GA would still be streaming output_audio_transcript.delta tokens into one part, and would not open a second synthesizer. A second .done on the same response is our sentence pipeline, not GA.",
@@ -231,7 +231,7 @@ const CLEAN: Beat[] = [
     asr: null,
     llm: null,
     tts: {
-      who: "MiniMax SSE → AudioHandler",
+      who: "MiniMax WebSocket → AudioHandler",
       event: "response.output_audio.delta",
       detail: "content_index increments. Same response_id. Concatenate PCM.",
     },
@@ -462,7 +462,7 @@ const BARGE: Beat[] = [
     tts: {
       who: "MiniMax → AudioHandler",
       event: "response.output_audio.delta",
-      detail: "New HTTP stream. Old MiniMax connection is irrelevant.",
+      detail: "Fresh task_start + task_continue. The interrupted MiniMax task was closed.",
     },
     vs: "differ",
     ga: "Names match. We still skip transcript.delta / output_item.added / content_part.*.",
@@ -587,7 +587,7 @@ const GA_ROWS: Array<{
     who: "MiniMax → AudioHandler",
     lane: "TTS",
     vs: "same",
-    note: "Base64 PCM16. PLAY / append chunks. Source is MiniMax HTTP SSE, not the OpenAI speech model.",
+    note: "Base64 PCM16. PLAY / append chunks. Source is MiniMax T2A WebSocket, not the OpenAI speech model.",
   },
   {
     event: "response.output_audio.done",

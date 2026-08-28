@@ -29,6 +29,20 @@ class ResponsesApiLanguageModelHandlerArguments(LanguageModelBaseArguments):
         default=True,
         metadata={
             "help": "Disable provider-side thinking/reasoning when supported by the OpenAI-compatible backend. "
-            "For Together Qwen3.5 models this sends chat_template_kwargs.enable_thinking=false."
+            "Uses thinking.type=disabled for DeepSeek and chat_template_kwargs.enable_thinking=false for Qwen."
+        },
+    )
+    responses_api_connection_keepalive_s: float = field(
+        default=300.0,
+        metadata={
+            "help": "How long idle hosted-LLM HTTP connections remain reusable. The OpenAI SDK default is only five "
+            "seconds, which often makes the first spoken turn repeat DNS/TCP/TLS setup. Default is 300 seconds."
+        },
+    )
+    responses_api_prewarm_wait_s: float = field(
+        default=0.5,
+        metadata={
+            "help": "Maximum time a model request waits for an in-progress connection refresh. This prevents an "
+            "immediate telephony greeting from racing the refresh and opening another cold connection. Default is 0.5."
         },
     )

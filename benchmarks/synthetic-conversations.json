@@ -1,0 +1,5209 @@
+{
+  "schema_version": 1,
+  "case_count": 100,
+  "turn_count": 1000,
+  "minimum_turns_per_case": 10,
+  "family_count": 10,
+  "cases": [
+    {
+      "case_id": "travel-planning-01",
+      "family": "travel-planning",
+      "variant": 1,
+      "tags": [
+        "context",
+        "planning",
+        "constraints"
+      ],
+      "turns": [
+        {
+          "turn_id": "travel-planning-01-turn-01",
+          "prompt": "Help me plan a 3-day trip to Kyoto."
+        },
+        {
+          "turn_id": "travel-planning-01-turn-02",
+          "prompt": "For the Kyoto trip, keep my total budget near 900 dollars."
+        },
+        {
+          "turn_id": "travel-planning-01-turn-03",
+          "prompt": "On this Kyoto visit, I care most about quiet historic streets."
+        },
+        {
+          "turn_id": "travel-planning-01-turn-04",
+          "prompt": "Which neighborhood in Kyoto best fits that preference?"
+        },
+        {
+          "turn_id": "travel-planning-01-turn-05",
+          "prompt": "Give me a simple first-morning plan for Kyoto."
+        },
+        {
+          "turn_id": "travel-planning-01-turn-06",
+          "prompt": "Make the second day in Kyoto less rushed than the first."
+        },
+        {
+          "turn_id": "travel-planning-01-turn-07",
+          "prompt": "Suggest one rainy-day alternative while I am in Kyoto."
+        },
+        {
+          "turn_id": "travel-planning-01-turn-08",
+          "prompt": "What local food should I prioritize in Kyoto?"
+        },
+        {
+          "turn_id": "travel-planning-01-turn-09",
+          "prompt": "Summarize my Kyoto plan in three short points."
+        },
+        {
+          "turn_id": "travel-planning-01-turn-10",
+          "prompt": "What should I book first for the Kyoto trip?"
+        }
+      ]
+    },
+    {
+      "case_id": "travel-planning-02",
+      "family": "travel-planning",
+      "variant": 2,
+      "tags": [
+        "context",
+        "planning",
+        "constraints"
+      ],
+      "turns": [
+        {
+          "turn_id": "travel-planning-02-turn-01",
+          "prompt": "Help me plan a 4-day trip to Lisbon."
+        },
+        {
+          "turn_id": "travel-planning-02-turn-02",
+          "prompt": "For the Lisbon trip, keep my total budget near 1075 dollars."
+        },
+        {
+          "turn_id": "travel-planning-02-turn-03",
+          "prompt": "On this Lisbon visit, I care most about modern architecture."
+        },
+        {
+          "turn_id": "travel-planning-02-turn-04",
+          "prompt": "Which neighborhood in Lisbon best fits that preference?"
+        },
+        {
+          "turn_id": "travel-planning-02-turn-05",
+          "prompt": "Give me a simple first-morning plan for Lisbon."
+        },
+        {
+          "turn_id": "travel-planning-02-turn-06",
+          "prompt": "Make the second day in Lisbon less rushed than the first."
+        },
+        {
+          "turn_id": "travel-planning-02-turn-07",
+          "prompt": "Suggest one rainy-day alternative while I am in Lisbon."
+        },
+        {
+          "turn_id": "travel-planning-02-turn-08",
+          "prompt": "What local food should I prioritize in Lisbon?"
+        },
+        {
+          "turn_id": "travel-planning-02-turn-09",
+          "prompt": "Summarize my Lisbon plan in three short points."
+        },
+        {
+          "turn_id": "travel-planning-02-turn-10",
+          "prompt": "What should I book first for the Lisbon trip?"
+        }
+      ]
+    },
+    {
+      "case_id": "travel-planning-03",
+      "family": "travel-planning",
+      "variant": 3,
+      "tags": [
+        "context",
+        "planning",
+        "constraints"
+      ],
+      "turns": [
+        {
+          "turn_id": "travel-planning-03-turn-01",
+          "prompt": "Help me plan a 5-day trip to Vancouver."
+        },
+        {
+          "turn_id": "travel-planning-03-turn-02",
+          "prompt": "For the Vancouver trip, keep my total budget near 1250 dollars."
+        },
+        {
+          "turn_id": "travel-planning-03-turn-03",
+          "prompt": "On this Vancouver visit, I care most about local food markets."
+        },
+        {
+          "turn_id": "travel-planning-03-turn-04",
+          "prompt": "Which neighborhood in Vancouver best fits that preference?"
+        },
+        {
+          "turn_id": "travel-planning-03-turn-05",
+          "prompt": "Give me a simple first-morning plan for Vancouver."
+        },
+        {
+          "turn_id": "travel-planning-03-turn-06",
+          "prompt": "Make the second day in Vancouver less rushed than the first."
+        },
+        {
+          "turn_id": "travel-planning-03-turn-07",
+          "prompt": "Suggest one rainy-day alternative while I am in Vancouver."
+        },
+        {
+          "turn_id": "travel-planning-03-turn-08",
+          "prompt": "What local food should I prioritize in Vancouver?"
+        },
+        {
+          "turn_id": "travel-planning-03-turn-09",
+          "prompt": "Summarize my Vancouver plan in three short points."
+        },
+        {
+          "turn_id": "travel-planning-03-turn-10",
+          "prompt": "What should I book first for the Vancouver trip?"
+        }
+      ]
+    },
+    {
+      "case_id": "travel-planning-04",
+      "family": "travel-planning",
+      "variant": 4,
+      "tags": [
+        "context",
+        "planning",
+        "constraints"
+      ],
+      "turns": [
+        {
+          "turn_id": "travel-planning-04-turn-01",
+          "prompt": "Help me plan a 6-day trip to Singapore."
+        },
+        {
+          "turn_id": "travel-planning-04-turn-02",
+          "prompt": "For the Singapore trip, keep my total budget near 1425 dollars."
+        },
+        {
+          "turn_id": "travel-planning-04-turn-03",
+          "prompt": "On this Singapore visit, I care most about easy nature walks."
+        },
+        {
+          "turn_id": "travel-planning-04-turn-04",
+          "prompt": "Which neighborhood in Singapore best fits that preference?"
+        },
+        {
+          "turn_id": "travel-planning-04-turn-05",
+          "prompt": "Give me a simple first-morning plan for Singapore."
+        },
+        {
+          "turn_id": "travel-planning-04-turn-06",
+          "prompt": "Make the second day in Singapore less rushed than the first."
+        },
+        {
+          "turn_id": "travel-planning-04-turn-07",
+          "prompt": "Suggest one rainy-day alternative while I am in Singapore."
+        },
+        {
+          "turn_id": "travel-planning-04-turn-08",
+          "prompt": "What local food should I prioritize in Singapore?"
+        },
+        {
+          "turn_id": "travel-planning-04-turn-09",
+          "prompt": "Summarize my Singapore plan in three short points."
+        },
+        {
+          "turn_id": "travel-planning-04-turn-10",
+          "prompt": "What should I book first for the Singapore trip?"
+        }
+      ]
+    },
+    {
+      "case_id": "travel-planning-05",
+      "family": "travel-planning",
+      "variant": 5,
+      "tags": [
+        "context",
+        "planning",
+        "constraints"
+      ],
+      "turns": [
+        {
+          "turn_id": "travel-planning-05-turn-01",
+          "prompt": "Help me plan a 7-day trip to Reykjavik."
+        },
+        {
+          "turn_id": "travel-planning-05-turn-02",
+          "prompt": "For the Reykjavik trip, keep my total budget near 1600 dollars."
+        },
+        {
+          "turn_id": "travel-planning-05-turn-03",
+          "prompt": "On this Reykjavik visit, I care most about museums."
+        },
+        {
+          "turn_id": "travel-planning-05-turn-04",
+          "prompt": "Which neighborhood in Reykjavik best fits that preference?"
+        },
+        {
+          "turn_id": "travel-planning-05-turn-05",
+          "prompt": "Give me a simple first-morning plan for Reykjavik."
+        },
+        {
+          "turn_id": "travel-planning-05-turn-06",
+          "prompt": "Make the second day in Reykjavik less rushed than the first."
+        },
+        {
+          "turn_id": "travel-planning-05-turn-07",
+          "prompt": "Suggest one rainy-day alternative while I am in Reykjavik."
+        },
+        {
+          "turn_id": "travel-planning-05-turn-08",
+          "prompt": "What local food should I prioritize in Reykjavik?"
+        },
+        {
+          "turn_id": "travel-planning-05-turn-09",
+          "prompt": "Summarize my Reykjavik plan in three short points."
+        },
+        {
+          "turn_id": "travel-planning-05-turn-10",
+          "prompt": "What should I book first for the Reykjavik trip?"
+        }
+      ]
+    },
+    {
+      "case_id": "travel-planning-06",
+      "family": "travel-planning",
+      "variant": 6,
+      "tags": [
+        "context",
+        "planning",
+        "constraints"
+      ],
+      "turns": [
+        {
+          "turn_id": "travel-planning-06-turn-01",
+          "prompt": "Help me plan a 3-day trip to Melbourne."
+        },
+        {
+          "turn_id": "travel-planning-06-turn-02",
+          "prompt": "For the Melbourne trip, keep my total budget near 1775 dollars."
+        },
+        {
+          "turn_id": "travel-planning-06-turn-03",
+          "prompt": "On this Melbourne visit, I care most about quiet historic streets."
+        },
+        {
+          "turn_id": "travel-planning-06-turn-04",
+          "prompt": "Which neighborhood in Melbourne best fits that preference?"
+        },
+        {
+          "turn_id": "travel-planning-06-turn-05",
+          "prompt": "Give me a simple first-morning plan for Melbourne."
+        },
+        {
+          "turn_id": "travel-planning-06-turn-06",
+          "prompt": "Make the second day in Melbourne less rushed than the first."
+        },
+        {
+          "turn_id": "travel-planning-06-turn-07",
+          "prompt": "Suggest one rainy-day alternative while I am in Melbourne."
+        },
+        {
+          "turn_id": "travel-planning-06-turn-08",
+          "prompt": "What local food should I prioritize in Melbourne?"
+        },
+        {
+          "turn_id": "travel-planning-06-turn-09",
+          "prompt": "Summarize my Melbourne plan in three short points."
+        },
+        {
+          "turn_id": "travel-planning-06-turn-10",
+          "prompt": "What should I book first for the Melbourne trip?"
+        }
+      ]
+    },
+    {
+      "case_id": "travel-planning-07",
+      "family": "travel-planning",
+      "variant": 7,
+      "tags": [
+        "context",
+        "planning",
+        "constraints"
+      ],
+      "turns": [
+        {
+          "turn_id": "travel-planning-07-turn-01",
+          "prompt": "Help me plan a 4-day trip to Seoul."
+        },
+        {
+          "turn_id": "travel-planning-07-turn-02",
+          "prompt": "For the Seoul trip, keep my total budget near 1950 dollars."
+        },
+        {
+          "turn_id": "travel-planning-07-turn-03",
+          "prompt": "On this Seoul visit, I care most about modern architecture."
+        },
+        {
+          "turn_id": "travel-planning-07-turn-04",
+          "prompt": "Which neighborhood in Seoul best fits that preference?"
+        },
+        {
+          "turn_id": "travel-planning-07-turn-05",
+          "prompt": "Give me a simple first-morning plan for Seoul."
+        },
+        {
+          "turn_id": "travel-planning-07-turn-06",
+          "prompt": "Make the second day in Seoul less rushed than the first."
+        },
+        {
+          "turn_id": "travel-planning-07-turn-07",
+          "prompt": "Suggest one rainy-day alternative while I am in Seoul."
+        },
+        {
+          "turn_id": "travel-planning-07-turn-08",
+          "prompt": "What local food should I prioritize in Seoul?"
+        },
+        {
+          "turn_id": "travel-planning-07-turn-09",
+          "prompt": "Summarize my Seoul plan in three short points."
+        },
+        {
+          "turn_id": "travel-planning-07-turn-10",
+          "prompt": "What should I book first for the Seoul trip?"
+        }
+      ]
+    },
+    {
+      "case_id": "travel-planning-08",
+      "family": "travel-planning",
+      "variant": 8,
+      "tags": [
+        "context",
+        "planning",
+        "constraints"
+      ],
+      "turns": [
+        {
+          "turn_id": "travel-planning-08-turn-01",
+          "prompt": "Help me plan a 5-day trip to Barcelona."
+        },
+        {
+          "turn_id": "travel-planning-08-turn-02",
+          "prompt": "For the Barcelona trip, keep my total budget near 2125 dollars."
+        },
+        {
+          "turn_id": "travel-planning-08-turn-03",
+          "prompt": "On this Barcelona visit, I care most about local food markets."
+        },
+        {
+          "turn_id": "travel-planning-08-turn-04",
+          "prompt": "Which neighborhood in Barcelona best fits that preference?"
+        },
+        {
+          "turn_id": "travel-planning-08-turn-05",
+          "prompt": "Give me a simple first-morning plan for Barcelona."
+        },
+        {
+          "turn_id": "travel-planning-08-turn-06",
+          "prompt": "Make the second day in Barcelona less rushed than the first."
+        },
+        {
+          "turn_id": "travel-planning-08-turn-07",
+          "prompt": "Suggest one rainy-day alternative while I am in Barcelona."
+        },
+        {
+          "turn_id": "travel-planning-08-turn-08",
+          "prompt": "What local food should I prioritize in Barcelona?"
+        },
+        {
+          "turn_id": "travel-planning-08-turn-09",
+          "prompt": "Summarize my Barcelona plan in three short points."
+        },
+        {
+          "turn_id": "travel-planning-08-turn-10",
+          "prompt": "What should I book first for the Barcelona trip?"
+        }
+      ]
+    },
+    {
+      "case_id": "travel-planning-09",
+      "family": "travel-planning",
+      "variant": 9,
+      "tags": [
+        "context",
+        "planning",
+        "constraints"
+      ],
+      "turns": [
+        {
+          "turn_id": "travel-planning-09-turn-01",
+          "prompt": "Help me plan a 6-day trip to Marrakesh."
+        },
+        {
+          "turn_id": "travel-planning-09-turn-02",
+          "prompt": "For the Marrakesh trip, keep my total budget near 2300 dollars."
+        },
+        {
+          "turn_id": "travel-planning-09-turn-03",
+          "prompt": "On this Marrakesh visit, I care most about easy nature walks."
+        },
+        {
+          "turn_id": "travel-planning-09-turn-04",
+          "prompt": "Which neighborhood in Marrakesh best fits that preference?"
+        },
+        {
+          "turn_id": "travel-planning-09-turn-05",
+          "prompt": "Give me a simple first-morning plan for Marrakesh."
+        },
+        {
+          "turn_id": "travel-planning-09-turn-06",
+          "prompt": "Make the second day in Marrakesh less rushed than the first."
+        },
+        {
+          "turn_id": "travel-planning-09-turn-07",
+          "prompt": "Suggest one rainy-day alternative while I am in Marrakesh."
+        },
+        {
+          "turn_id": "travel-planning-09-turn-08",
+          "prompt": "What local food should I prioritize in Marrakesh?"
+        },
+        {
+          "turn_id": "travel-planning-09-turn-09",
+          "prompt": "Summarize my Marrakesh plan in three short points."
+        },
+        {
+          "turn_id": "travel-planning-09-turn-10",
+          "prompt": "What should I book first for the Marrakesh trip?"
+        }
+      ]
+    },
+    {
+      "case_id": "travel-planning-10",
+      "family": "travel-planning",
+      "variant": 10,
+      "tags": [
+        "context",
+        "planning",
+        "constraints"
+      ],
+      "turns": [
+        {
+          "turn_id": "travel-planning-10-turn-01",
+          "prompt": "Help me plan a 7-day trip to Auckland."
+        },
+        {
+          "turn_id": "travel-planning-10-turn-02",
+          "prompt": "For the Auckland trip, keep my total budget near 2475 dollars."
+        },
+        {
+          "turn_id": "travel-planning-10-turn-03",
+          "prompt": "On this Auckland visit, I care most about museums."
+        },
+        {
+          "turn_id": "travel-planning-10-turn-04",
+          "prompt": "Which neighborhood in Auckland best fits that preference?"
+        },
+        {
+          "turn_id": "travel-planning-10-turn-05",
+          "prompt": "Give me a simple first-morning plan for Auckland."
+        },
+        {
+          "turn_id": "travel-planning-10-turn-06",
+          "prompt": "Make the second day in Auckland less rushed than the first."
+        },
+        {
+          "turn_id": "travel-planning-10-turn-07",
+          "prompt": "Suggest one rainy-day alternative while I am in Auckland."
+        },
+        {
+          "turn_id": "travel-planning-10-turn-08",
+          "prompt": "What local food should I prioritize in Auckland?"
+        },
+        {
+          "turn_id": "travel-planning-10-turn-09",
+          "prompt": "Summarize my Auckland plan in three short points."
+        },
+        {
+          "turn_id": "travel-planning-10-turn-10",
+          "prompt": "What should I book first for the Auckland trip?"
+        }
+      ]
+    },
+    {
+      "case_id": "device-support-01",
+      "family": "device-support",
+      "variant": 1,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "device-support-01-turn-01",
+          "prompt": "My Orion wireless headphones has started disconnecting every few minutes; help me diagnose it."
+        },
+        {
+          "turn_id": "device-support-01-turn-02",
+          "prompt": "The Orion wireless headphones problem began after yesterday's software update."
+        },
+        {
+          "turn_id": "device-support-01-turn-03",
+          "prompt": "I already restarted the Orion wireless headphones, but disconnecting every few minutes continues."
+        },
+        {
+          "turn_id": "device-support-01-turn-04",
+          "prompt": "Which Orion wireless headphones setting should I inspect first?"
+        },
+        {
+          "turn_id": "device-support-01-turn-05",
+          "prompt": "Explain that Orion wireless headphones check without technical jargon."
+        },
+        {
+          "turn_id": "device-support-01-turn-06",
+          "prompt": "The Orion wireless headphones indicator is blue, not red; revise the diagnosis."
+        },
+        {
+          "turn_id": "device-support-01-turn-07",
+          "prompt": "Give me one safe reset step for the Orion wireless headphones."
+        },
+        {
+          "turn_id": "device-support-01-turn-08",
+          "prompt": "What data should I back up before resetting the Orion wireless headphones?"
+        },
+        {
+          "turn_id": "device-support-01-turn-09",
+          "prompt": "Summarize everything we tried on the Orion wireless headphones."
+        },
+        {
+          "turn_id": "device-support-01-turn-10",
+          "prompt": "When should I escalate the Orion wireless headphones case to support?"
+        }
+      ]
+    },
+    {
+      "case_id": "device-support-02",
+      "family": "device-support",
+      "variant": 2,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "device-support-02-turn-01",
+          "prompt": "My Nova fitness watch has started losing battery unusually quickly; help me diagnose it."
+        },
+        {
+          "turn_id": "device-support-02-turn-02",
+          "prompt": "The Nova fitness watch problem began after yesterday's software update."
+        },
+        {
+          "turn_id": "device-support-02-turn-03",
+          "prompt": "I already restarted the Nova fitness watch, but losing battery unusually quickly continues."
+        },
+        {
+          "turn_id": "device-support-02-turn-04",
+          "prompt": "Which Nova fitness watch setting should I inspect first?"
+        },
+        {
+          "turn_id": "device-support-02-turn-05",
+          "prompt": "Explain that Nova fitness watch check without technical jargon."
+        },
+        {
+          "turn_id": "device-support-02-turn-06",
+          "prompt": "The Nova fitness watch indicator is blue, not red; revise the diagnosis."
+        },
+        {
+          "turn_id": "device-support-02-turn-07",
+          "prompt": "Give me one safe reset step for the Nova fitness watch."
+        },
+        {
+          "turn_id": "device-support-02-turn-08",
+          "prompt": "What data should I back up before resetting the Nova fitness watch?"
+        },
+        {
+          "turn_id": "device-support-02-turn-09",
+          "prompt": "Summarize everything we tried on the Nova fitness watch."
+        },
+        {
+          "turn_id": "device-support-02-turn-10",
+          "prompt": "When should I escalate the Nova fitness watch case to support?"
+        }
+      ]
+    },
+    {
+      "case_id": "device-support-03",
+      "family": "device-support",
+      "variant": 3,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "device-support-03-turn-01",
+          "prompt": "My Atlas home router has started showing a blank screen; help me diagnose it."
+        },
+        {
+          "turn_id": "device-support-03-turn-02",
+          "prompt": "The Atlas home router problem began after yesterday's software update."
+        },
+        {
+          "turn_id": "device-support-03-turn-03",
+          "prompt": "I already restarted the Atlas home router, but showing a blank screen continues."
+        },
+        {
+          "turn_id": "device-support-03-turn-04",
+          "prompt": "Which Atlas home router setting should I inspect first?"
+        },
+        {
+          "turn_id": "device-support-03-turn-05",
+          "prompt": "Explain that Atlas home router check without technical jargon."
+        },
+        {
+          "turn_id": "device-support-03-turn-06",
+          "prompt": "The Atlas home router indicator is blue, not red; revise the diagnosis."
+        },
+        {
+          "turn_id": "device-support-03-turn-07",
+          "prompt": "Give me one safe reset step for the Atlas home router."
+        },
+        {
+          "turn_id": "device-support-03-turn-08",
+          "prompt": "What data should I back up before resetting the Atlas home router?"
+        },
+        {
+          "turn_id": "device-support-03-turn-09",
+          "prompt": "Summarize everything we tried on the Atlas home router."
+        },
+        {
+          "turn_id": "device-support-03-turn-10",
+          "prompt": "When should I escalate the Atlas home router case to support?"
+        }
+      ]
+    },
+    {
+      "case_id": "device-support-04",
+      "family": "device-support",
+      "variant": 4,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "device-support-04-turn-01",
+          "prompt": "My Luma smart lamp has started failing to respond; help me diagnose it."
+        },
+        {
+          "turn_id": "device-support-04-turn-02",
+          "prompt": "The Luma smart lamp problem began after yesterday's software update."
+        },
+        {
+          "turn_id": "device-support-04-turn-03",
+          "prompt": "I already restarted the Luma smart lamp, but failing to respond continues."
+        },
+        {
+          "turn_id": "device-support-04-turn-04",
+          "prompt": "Which Luma smart lamp setting should I inspect first?"
+        },
+        {
+          "turn_id": "device-support-04-turn-05",
+          "prompt": "Explain that Luma smart lamp check without technical jargon."
+        },
+        {
+          "turn_id": "device-support-04-turn-06",
+          "prompt": "The Luma smart lamp indicator is blue, not red; revise the diagnosis."
+        },
+        {
+          "turn_id": "device-support-04-turn-07",
+          "prompt": "Give me one safe reset step for the Luma smart lamp."
+        },
+        {
+          "turn_id": "device-support-04-turn-08",
+          "prompt": "What data should I back up before resetting the Luma smart lamp?"
+        },
+        {
+          "turn_id": "device-support-04-turn-09",
+          "prompt": "Summarize everything we tried on the Luma smart lamp."
+        },
+        {
+          "turn_id": "device-support-04-turn-10",
+          "prompt": "When should I escalate the Luma smart lamp case to support?"
+        }
+      ]
+    },
+    {
+      "case_id": "device-support-05",
+      "family": "device-support",
+      "variant": 5,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "device-support-05-turn-01",
+          "prompt": "My Pico action camera has started overheating during normal use; help me diagnose it."
+        },
+        {
+          "turn_id": "device-support-05-turn-02",
+          "prompt": "The Pico action camera problem began after yesterday's software update."
+        },
+        {
+          "turn_id": "device-support-05-turn-03",
+          "prompt": "I already restarted the Pico action camera, but overheating during normal use continues."
+        },
+        {
+          "turn_id": "device-support-05-turn-04",
+          "prompt": "Which Pico action camera setting should I inspect first?"
+        },
+        {
+          "turn_id": "device-support-05-turn-05",
+          "prompt": "Explain that Pico action camera check without technical jargon."
+        },
+        {
+          "turn_id": "device-support-05-turn-06",
+          "prompt": "The Pico action camera indicator is blue, not red; revise the diagnosis."
+        },
+        {
+          "turn_id": "device-support-05-turn-07",
+          "prompt": "Give me one safe reset step for the Pico action camera."
+        },
+        {
+          "turn_id": "device-support-05-turn-08",
+          "prompt": "What data should I back up before resetting the Pico action camera?"
+        },
+        {
+          "turn_id": "device-support-05-turn-09",
+          "prompt": "Summarize everything we tried on the Pico action camera."
+        },
+        {
+          "turn_id": "device-support-05-turn-10",
+          "prompt": "When should I escalate the Pico action camera case to support?"
+        }
+      ]
+    },
+    {
+      "case_id": "device-support-06",
+      "family": "device-support",
+      "variant": 6,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "device-support-06-turn-01",
+          "prompt": "My Nimbus e-reader has started disconnecting every few minutes; help me diagnose it."
+        },
+        {
+          "turn_id": "device-support-06-turn-02",
+          "prompt": "The Nimbus e-reader problem began after yesterday's software update."
+        },
+        {
+          "turn_id": "device-support-06-turn-03",
+          "prompt": "I already restarted the Nimbus e-reader, but disconnecting every few minutes continues."
+        },
+        {
+          "turn_id": "device-support-06-turn-04",
+          "prompt": "Which Nimbus e-reader setting should I inspect first?"
+        },
+        {
+          "turn_id": "device-support-06-turn-05",
+          "prompt": "Explain that Nimbus e-reader check without technical jargon."
+        },
+        {
+          "turn_id": "device-support-06-turn-06",
+          "prompt": "The Nimbus e-reader indicator is blue, not red; revise the diagnosis."
+        },
+        {
+          "turn_id": "device-support-06-turn-07",
+          "prompt": "Give me one safe reset step for the Nimbus e-reader."
+        },
+        {
+          "turn_id": "device-support-06-turn-08",
+          "prompt": "What data should I back up before resetting the Nimbus e-reader?"
+        },
+        {
+          "turn_id": "device-support-06-turn-09",
+          "prompt": "Summarize everything we tried on the Nimbus e-reader."
+        },
+        {
+          "turn_id": "device-support-06-turn-10",
+          "prompt": "When should I escalate the Nimbus e-reader case to support?"
+        }
+      ]
+    },
+    {
+      "case_id": "device-support-07",
+      "family": "device-support",
+      "variant": 7,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "device-support-07-turn-01",
+          "prompt": "My Echo portable speaker has started losing battery unusually quickly; help me diagnose it."
+        },
+        {
+          "turn_id": "device-support-07-turn-02",
+          "prompt": "The Echo portable speaker problem began after yesterday's software update."
+        },
+        {
+          "turn_id": "device-support-07-turn-03",
+          "prompt": "I already restarted the Echo portable speaker, but losing battery unusually quickly continues."
+        },
+        {
+          "turn_id": "device-support-07-turn-04",
+          "prompt": "Which Echo portable speaker setting should I inspect first?"
+        },
+        {
+          "turn_id": "device-support-07-turn-05",
+          "prompt": "Explain that Echo portable speaker check without technical jargon."
+        },
+        {
+          "turn_id": "device-support-07-turn-06",
+          "prompt": "The Echo portable speaker indicator is blue, not red; revise the diagnosis."
+        },
+        {
+          "turn_id": "device-support-07-turn-07",
+          "prompt": "Give me one safe reset step for the Echo portable speaker."
+        },
+        {
+          "turn_id": "device-support-07-turn-08",
+          "prompt": "What data should I back up before resetting the Echo portable speaker?"
+        },
+        {
+          "turn_id": "device-support-07-turn-09",
+          "prompt": "Summarize everything we tried on the Echo portable speaker."
+        },
+        {
+          "turn_id": "device-support-07-turn-10",
+          "prompt": "When should I escalate the Echo portable speaker case to support?"
+        }
+      ]
+    },
+    {
+      "case_id": "device-support-08",
+      "family": "device-support",
+      "variant": 8,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "device-support-08-turn-01",
+          "prompt": "My Terra robot vacuum has started showing a blank screen; help me diagnose it."
+        },
+        {
+          "turn_id": "device-support-08-turn-02",
+          "prompt": "The Terra robot vacuum problem began after yesterday's software update."
+        },
+        {
+          "turn_id": "device-support-08-turn-03",
+          "prompt": "I already restarted the Terra robot vacuum, but showing a blank screen continues."
+        },
+        {
+          "turn_id": "device-support-08-turn-04",
+          "prompt": "Which Terra robot vacuum setting should I inspect first?"
+        },
+        {
+          "turn_id": "device-support-08-turn-05",
+          "prompt": "Explain that Terra robot vacuum check without technical jargon."
+        },
+        {
+          "turn_id": "device-support-08-turn-06",
+          "prompt": "The Terra robot vacuum indicator is blue, not red; revise the diagnosis."
+        },
+        {
+          "turn_id": "device-support-08-turn-07",
+          "prompt": "Give me one safe reset step for the Terra robot vacuum."
+        },
+        {
+          "turn_id": "device-support-08-turn-08",
+          "prompt": "What data should I back up before resetting the Terra robot vacuum?"
+        },
+        {
+          "turn_id": "device-support-08-turn-09",
+          "prompt": "Summarize everything we tried on the Terra robot vacuum."
+        },
+        {
+          "turn_id": "device-support-08-turn-10",
+          "prompt": "When should I escalate the Terra robot vacuum case to support?"
+        }
+      ]
+    },
+    {
+      "case_id": "device-support-09",
+      "family": "device-support",
+      "variant": 9,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "device-support-09-turn-01",
+          "prompt": "My Vela tablet has started failing to respond; help me diagnose it."
+        },
+        {
+          "turn_id": "device-support-09-turn-02",
+          "prompt": "The Vela tablet problem began after yesterday's software update."
+        },
+        {
+          "turn_id": "device-support-09-turn-03",
+          "prompt": "I already restarted the Vela tablet, but failing to respond continues."
+        },
+        {
+          "turn_id": "device-support-09-turn-04",
+          "prompt": "Which Vela tablet setting should I inspect first?"
+        },
+        {
+          "turn_id": "device-support-09-turn-05",
+          "prompt": "Explain that Vela tablet check without technical jargon."
+        },
+        {
+          "turn_id": "device-support-09-turn-06",
+          "prompt": "The Vela tablet indicator is blue, not red; revise the diagnosis."
+        },
+        {
+          "turn_id": "device-support-09-turn-07",
+          "prompt": "Give me one safe reset step for the Vela tablet."
+        },
+        {
+          "turn_id": "device-support-09-turn-08",
+          "prompt": "What data should I back up before resetting the Vela tablet?"
+        },
+        {
+          "turn_id": "device-support-09-turn-09",
+          "prompt": "Summarize everything we tried on the Vela tablet."
+        },
+        {
+          "turn_id": "device-support-09-turn-10",
+          "prompt": "When should I escalate the Vela tablet case to support?"
+        }
+      ]
+    },
+    {
+      "case_id": "device-support-10",
+      "family": "device-support",
+      "variant": 10,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "device-support-10-turn-01",
+          "prompt": "My Comet mechanical keyboard has started overheating during normal use; help me diagnose it."
+        },
+        {
+          "turn_id": "device-support-10-turn-02",
+          "prompt": "The Comet mechanical keyboard problem began after yesterday's software update."
+        },
+        {
+          "turn_id": "device-support-10-turn-03",
+          "prompt": "I already restarted the Comet mechanical keyboard, but overheating during normal use continues."
+        },
+        {
+          "turn_id": "device-support-10-turn-04",
+          "prompt": "Which Comet mechanical keyboard setting should I inspect first?"
+        },
+        {
+          "turn_id": "device-support-10-turn-05",
+          "prompt": "Explain that Comet mechanical keyboard check without technical jargon."
+        },
+        {
+          "turn_id": "device-support-10-turn-06",
+          "prompt": "The Comet mechanical keyboard indicator is blue, not red; revise the diagnosis."
+        },
+        {
+          "turn_id": "device-support-10-turn-07",
+          "prompt": "Give me one safe reset step for the Comet mechanical keyboard."
+        },
+        {
+          "turn_id": "device-support-10-turn-08",
+          "prompt": "What data should I back up before resetting the Comet mechanical keyboard?"
+        },
+        {
+          "turn_id": "device-support-10-turn-09",
+          "prompt": "Summarize everything we tried on the Comet mechanical keyboard."
+        },
+        {
+          "turn_id": "device-support-10-turn-10",
+          "prompt": "When should I escalate the Comet mechanical keyboard case to support?"
+        }
+      ]
+    },
+    {
+      "case_id": "restaurant-booking-01",
+      "family": "restaurant-booking",
+      "variant": 1,
+      "tags": [
+        "context",
+        "booking",
+        "numeric"
+      ],
+      "turns": [
+        {
+          "turn_id": "restaurant-booking-01-turn-01",
+          "prompt": "Help me plan a dinner at Juniper Kitchen in Boston."
+        },
+        {
+          "turn_id": "restaurant-booking-01-turn-02",
+          "prompt": "For Juniper Kitchen, I need a table for 2 people on October 12."
+        },
+        {
+          "turn_id": "restaurant-booking-01-turn-03",
+          "prompt": "Ask for a 6:30 PM reservation at Juniper Kitchen."
+        },
+        {
+          "turn_id": "restaurant-booking-01-turn-04",
+          "prompt": "One guest at Juniper Kitchen needs vegetarian options."
+        },
+        {
+          "turn_id": "restaurant-booking-01-turn-05",
+          "prompt": "Another Juniper Kitchen guest cannot eat peanuts."
+        },
+        {
+          "turn_id": "restaurant-booking-01-turn-06",
+          "prompt": "Move the preferred Juniper Kitchen time thirty minutes later."
+        },
+        {
+          "turn_id": "restaurant-booking-01-turn-07",
+          "prompt": "What should I confirm with Juniper Kitchen about accessibility?"
+        },
+        {
+          "turn_id": "restaurant-booking-01-turn-08",
+          "prompt": "Draft a concise booking request for Juniper Kitchen."
+        },
+        {
+          "turn_id": "restaurant-booking-01-turn-09",
+          "prompt": "Read back every detail for the Juniper Kitchen reservation."
+        },
+        {
+          "turn_id": "restaurant-booking-01-turn-10",
+          "prompt": "What is still unconfirmed about dinner at Juniper Kitchen?"
+        }
+      ]
+    },
+    {
+      "case_id": "restaurant-booking-02",
+      "family": "restaurant-booking",
+      "variant": 2,
+      "tags": [
+        "context",
+        "booking",
+        "numeric"
+      ],
+      "turns": [
+        {
+          "turn_id": "restaurant-booking-02-turn-01",
+          "prompt": "Help me plan a dinner at Harbor Table in Austin."
+        },
+        {
+          "turn_id": "restaurant-booking-02-turn-02",
+          "prompt": "For Harbor Table, I need a table for 3 people on October 13."
+        },
+        {
+          "turn_id": "restaurant-booking-02-turn-03",
+          "prompt": "Ask for a 7:30 PM reservation at Harbor Table."
+        },
+        {
+          "turn_id": "restaurant-booking-02-turn-04",
+          "prompt": "One guest at Harbor Table needs vegetarian options."
+        },
+        {
+          "turn_id": "restaurant-booking-02-turn-05",
+          "prompt": "Another Harbor Table guest cannot eat peanuts."
+        },
+        {
+          "turn_id": "restaurant-booking-02-turn-06",
+          "prompt": "Move the preferred Harbor Table time thirty minutes later."
+        },
+        {
+          "turn_id": "restaurant-booking-02-turn-07",
+          "prompt": "What should I confirm with Harbor Table about accessibility?"
+        },
+        {
+          "turn_id": "restaurant-booking-02-turn-08",
+          "prompt": "Draft a concise booking request for Harbor Table."
+        },
+        {
+          "turn_id": "restaurant-booking-02-turn-09",
+          "prompt": "Read back every detail for the Harbor Table reservation."
+        },
+        {
+          "turn_id": "restaurant-booking-02-turn-10",
+          "prompt": "What is still unconfirmed about dinner at Harbor Table?"
+        }
+      ]
+    },
+    {
+      "case_id": "restaurant-booking-03",
+      "family": "restaurant-booking",
+      "variant": 3,
+      "tags": [
+        "context",
+        "booking",
+        "numeric"
+      ],
+      "turns": [
+        {
+          "turn_id": "restaurant-booking-03-turn-01",
+          "prompt": "Help me plan a dinner at Copper Spoon in Seattle."
+        },
+        {
+          "turn_id": "restaurant-booking-03-turn-02",
+          "prompt": "For Copper Spoon, I need a table for 4 people on October 14."
+        },
+        {
+          "turn_id": "restaurant-booking-03-turn-03",
+          "prompt": "Ask for a 8:30 PM reservation at Copper Spoon."
+        },
+        {
+          "turn_id": "restaurant-booking-03-turn-04",
+          "prompt": "One guest at Copper Spoon needs vegetarian options."
+        },
+        {
+          "turn_id": "restaurant-booking-03-turn-05",
+          "prompt": "Another Copper Spoon guest cannot eat peanuts."
+        },
+        {
+          "turn_id": "restaurant-booking-03-turn-06",
+          "prompt": "Move the preferred Copper Spoon time thirty minutes later."
+        },
+        {
+          "turn_id": "restaurant-booking-03-turn-07",
+          "prompt": "What should I confirm with Copper Spoon about accessibility?"
+        },
+        {
+          "turn_id": "restaurant-booking-03-turn-08",
+          "prompt": "Draft a concise booking request for Copper Spoon."
+        },
+        {
+          "turn_id": "restaurant-booking-03-turn-09",
+          "prompt": "Read back every detail for the Copper Spoon reservation."
+        },
+        {
+          "turn_id": "restaurant-booking-03-turn-10",
+          "prompt": "What is still unconfirmed about dinner at Copper Spoon?"
+        }
+      ]
+    },
+    {
+      "case_id": "restaurant-booking-04",
+      "family": "restaurant-booking",
+      "variant": 4,
+      "tags": [
+        "context",
+        "booking",
+        "numeric"
+      ],
+      "turns": [
+        {
+          "turn_id": "restaurant-booking-04-turn-01",
+          "prompt": "Help me plan a dinner at Willow Garden in Denver."
+        },
+        {
+          "turn_id": "restaurant-booking-04-turn-02",
+          "prompt": "For Willow Garden, I need a table for 5 people on October 15."
+        },
+        {
+          "turn_id": "restaurant-booking-04-turn-03",
+          "prompt": "Ask for a 6:30 PM reservation at Willow Garden."
+        },
+        {
+          "turn_id": "restaurant-booking-04-turn-04",
+          "prompt": "One guest at Willow Garden needs vegetarian options."
+        },
+        {
+          "turn_id": "restaurant-booking-04-turn-05",
+          "prompt": "Another Willow Garden guest cannot eat peanuts."
+        },
+        {
+          "turn_id": "restaurant-booking-04-turn-06",
+          "prompt": "Move the preferred Willow Garden time thirty minutes later."
+        },
+        {
+          "turn_id": "restaurant-booking-04-turn-07",
+          "prompt": "What should I confirm with Willow Garden about accessibility?"
+        },
+        {
+          "turn_id": "restaurant-booking-04-turn-08",
+          "prompt": "Draft a concise booking request for Willow Garden."
+        },
+        {
+          "turn_id": "restaurant-booking-04-turn-09",
+          "prompt": "Read back every detail for the Willow Garden reservation."
+        },
+        {
+          "turn_id": "restaurant-booking-04-turn-10",
+          "prompt": "What is still unconfirmed about dinner at Willow Garden?"
+        }
+      ]
+    },
+    {
+      "case_id": "restaurant-booking-05",
+      "family": "restaurant-booking",
+      "variant": 5,
+      "tags": [
+        "context",
+        "booking",
+        "numeric"
+      ],
+      "turns": [
+        {
+          "turn_id": "restaurant-booking-05-turn-01",
+          "prompt": "Help me plan a dinner at North Star Cafe in Chicago."
+        },
+        {
+          "turn_id": "restaurant-booking-05-turn-02",
+          "prompt": "For North Star Cafe, I need a table for 6 people on October 16."
+        },
+        {
+          "turn_id": "restaurant-booking-05-turn-03",
+          "prompt": "Ask for a 7:30 PM reservation at North Star Cafe."
+        },
+        {
+          "turn_id": "restaurant-booking-05-turn-04",
+          "prompt": "One guest at North Star Cafe needs vegetarian options."
+        },
+        {
+          "turn_id": "restaurant-booking-05-turn-05",
+          "prompt": "Another North Star Cafe guest cannot eat peanuts."
+        },
+        {
+          "turn_id": "restaurant-booking-05-turn-06",
+          "prompt": "Move the preferred North Star Cafe time thirty minutes later."
+        },
+        {
+          "turn_id": "restaurant-booking-05-turn-07",
+          "prompt": "What should I confirm with North Star Cafe about accessibility?"
+        },
+        {
+          "turn_id": "restaurant-booking-05-turn-08",
+          "prompt": "Draft a concise booking request for North Star Cafe."
+        },
+        {
+          "turn_id": "restaurant-booking-05-turn-09",
+          "prompt": "Read back every detail for the North Star Cafe reservation."
+        },
+        {
+          "turn_id": "restaurant-booking-05-turn-10",
+          "prompt": "What is still unconfirmed about dinner at North Star Cafe?"
+        }
+      ]
+    },
+    {
+      "case_id": "restaurant-booking-06",
+      "family": "restaurant-booking",
+      "variant": 6,
+      "tags": [
+        "context",
+        "booking",
+        "numeric"
+      ],
+      "turns": [
+        {
+          "turn_id": "restaurant-booking-06-turn-01",
+          "prompt": "Help me plan a dinner at Saffron House in Portland."
+        },
+        {
+          "turn_id": "restaurant-booking-06-turn-02",
+          "prompt": "For Saffron House, I need a table for 7 people on October 17."
+        },
+        {
+          "turn_id": "restaurant-booking-06-turn-03",
+          "prompt": "Ask for a 8:30 PM reservation at Saffron House."
+        },
+        {
+          "turn_id": "restaurant-booking-06-turn-04",
+          "prompt": "One guest at Saffron House needs vegetarian options."
+        },
+        {
+          "turn_id": "restaurant-booking-06-turn-05",
+          "prompt": "Another Saffron House guest cannot eat peanuts."
+        },
+        {
+          "turn_id": "restaurant-booking-06-turn-06",
+          "prompt": "Move the preferred Saffron House time thirty minutes later."
+        },
+        {
+          "turn_id": "restaurant-booking-06-turn-07",
+          "prompt": "What should I confirm with Saffron House about accessibility?"
+        },
+        {
+          "turn_id": "restaurant-booking-06-turn-08",
+          "prompt": "Draft a concise booking request for Saffron House."
+        },
+        {
+          "turn_id": "restaurant-booking-06-turn-09",
+          "prompt": "Read back every detail for the Saffron House reservation."
+        },
+        {
+          "turn_id": "restaurant-booking-06-turn-10",
+          "prompt": "What is still unconfirmed about dinner at Saffron House?"
+        }
+      ]
+    },
+    {
+      "case_id": "restaurant-booking-07",
+      "family": "restaurant-booking",
+      "variant": 7,
+      "tags": [
+        "context",
+        "booking",
+        "numeric"
+      ],
+      "turns": [
+        {
+          "turn_id": "restaurant-booking-07-turn-01",
+          "prompt": "Help me plan a dinner at Blue Finch Bistro in Atlanta."
+        },
+        {
+          "turn_id": "restaurant-booking-07-turn-02",
+          "prompt": "For Blue Finch Bistro, I need a table for 2 people on October 18."
+        },
+        {
+          "turn_id": "restaurant-booking-07-turn-03",
+          "prompt": "Ask for a 6:30 PM reservation at Blue Finch Bistro."
+        },
+        {
+          "turn_id": "restaurant-booking-07-turn-04",
+          "prompt": "One guest at Blue Finch Bistro needs vegetarian options."
+        },
+        {
+          "turn_id": "restaurant-booking-07-turn-05",
+          "prompt": "Another Blue Finch Bistro guest cannot eat peanuts."
+        },
+        {
+          "turn_id": "restaurant-booking-07-turn-06",
+          "prompt": "Move the preferred Blue Finch Bistro time thirty minutes later."
+        },
+        {
+          "turn_id": "restaurant-booking-07-turn-07",
+          "prompt": "What should I confirm with Blue Finch Bistro about accessibility?"
+        },
+        {
+          "turn_id": "restaurant-booking-07-turn-08",
+          "prompt": "Draft a concise booking request for Blue Finch Bistro."
+        },
+        {
+          "turn_id": "restaurant-booking-07-turn-09",
+          "prompt": "Read back every detail for the Blue Finch Bistro reservation."
+        },
+        {
+          "turn_id": "restaurant-booking-07-turn-10",
+          "prompt": "What is still unconfirmed about dinner at Blue Finch Bistro?"
+        }
+      ]
+    },
+    {
+      "case_id": "restaurant-booking-08",
+      "family": "restaurant-booking",
+      "variant": 8,
+      "tags": [
+        "context",
+        "booking",
+        "numeric"
+      ],
+      "turns": [
+        {
+          "turn_id": "restaurant-booking-08-turn-01",
+          "prompt": "Help me plan a dinner at Maple Room in San Diego."
+        },
+        {
+          "turn_id": "restaurant-booking-08-turn-02",
+          "prompt": "For Maple Room, I need a table for 3 people on October 19."
+        },
+        {
+          "turn_id": "restaurant-booking-08-turn-03",
+          "prompt": "Ask for a 7:30 PM reservation at Maple Room."
+        },
+        {
+          "turn_id": "restaurant-booking-08-turn-04",
+          "prompt": "One guest at Maple Room needs vegetarian options."
+        },
+        {
+          "turn_id": "restaurant-booking-08-turn-05",
+          "prompt": "Another Maple Room guest cannot eat peanuts."
+        },
+        {
+          "turn_id": "restaurant-booking-08-turn-06",
+          "prompt": "Move the preferred Maple Room time thirty minutes later."
+        },
+        {
+          "turn_id": "restaurant-booking-08-turn-07",
+          "prompt": "What should I confirm with Maple Room about accessibility?"
+        },
+        {
+          "turn_id": "restaurant-booking-08-turn-08",
+          "prompt": "Draft a concise booking request for Maple Room."
+        },
+        {
+          "turn_id": "restaurant-booking-08-turn-09",
+          "prompt": "Read back every detail for the Maple Room reservation."
+        },
+        {
+          "turn_id": "restaurant-booking-08-turn-10",
+          "prompt": "What is still unconfirmed about dinner at Maple Room?"
+        }
+      ]
+    },
+    {
+      "case_id": "restaurant-booking-09",
+      "family": "restaurant-booking",
+      "variant": 9,
+      "tags": [
+        "context",
+        "booking",
+        "numeric"
+      ],
+      "turns": [
+        {
+          "turn_id": "restaurant-booking-09-turn-01",
+          "prompt": "Help me plan a dinner at Cedar Grill in Nashville."
+        },
+        {
+          "turn_id": "restaurant-booking-09-turn-02",
+          "prompt": "For Cedar Grill, I need a table for 4 people on October 20."
+        },
+        {
+          "turn_id": "restaurant-booking-09-turn-03",
+          "prompt": "Ask for a 8:30 PM reservation at Cedar Grill."
+        },
+        {
+          "turn_id": "restaurant-booking-09-turn-04",
+          "prompt": "One guest at Cedar Grill needs vegetarian options."
+        },
+        {
+          "turn_id": "restaurant-booking-09-turn-05",
+          "prompt": "Another Cedar Grill guest cannot eat peanuts."
+        },
+        {
+          "turn_id": "restaurant-booking-09-turn-06",
+          "prompt": "Move the preferred Cedar Grill time thirty minutes later."
+        },
+        {
+          "turn_id": "restaurant-booking-09-turn-07",
+          "prompt": "What should I confirm with Cedar Grill about accessibility?"
+        },
+        {
+          "turn_id": "restaurant-booking-09-turn-08",
+          "prompt": "Draft a concise booking request for Cedar Grill."
+        },
+        {
+          "turn_id": "restaurant-booking-09-turn-09",
+          "prompt": "Read back every detail for the Cedar Grill reservation."
+        },
+        {
+          "turn_id": "restaurant-booking-09-turn-10",
+          "prompt": "What is still unconfirmed about dinner at Cedar Grill?"
+        }
+      ]
+    },
+    {
+      "case_id": "restaurant-booking-10",
+      "family": "restaurant-booking",
+      "variant": 10,
+      "tags": [
+        "context",
+        "booking",
+        "numeric"
+      ],
+      "turns": [
+        {
+          "turn_id": "restaurant-booking-10-turn-01",
+          "prompt": "Help me plan a dinner at Olive Courtyard in Philadelphia."
+        },
+        {
+          "turn_id": "restaurant-booking-10-turn-02",
+          "prompt": "For Olive Courtyard, I need a table for 5 people on October 21."
+        },
+        {
+          "turn_id": "restaurant-booking-10-turn-03",
+          "prompt": "Ask for a 6:30 PM reservation at Olive Courtyard."
+        },
+        {
+          "turn_id": "restaurant-booking-10-turn-04",
+          "prompt": "One guest at Olive Courtyard needs vegetarian options."
+        },
+        {
+          "turn_id": "restaurant-booking-10-turn-05",
+          "prompt": "Another Olive Courtyard guest cannot eat peanuts."
+        },
+        {
+          "turn_id": "restaurant-booking-10-turn-06",
+          "prompt": "Move the preferred Olive Courtyard time thirty minutes later."
+        },
+        {
+          "turn_id": "restaurant-booking-10-turn-07",
+          "prompt": "What should I confirm with Olive Courtyard about accessibility?"
+        },
+        {
+          "turn_id": "restaurant-booking-10-turn-08",
+          "prompt": "Draft a concise booking request for Olive Courtyard."
+        },
+        {
+          "turn_id": "restaurant-booking-10-turn-09",
+          "prompt": "Read back every detail for the Olive Courtyard reservation."
+        },
+        {
+          "turn_id": "restaurant-booking-10-turn-10",
+          "prompt": "What is still unconfirmed about dinner at Olive Courtyard?"
+        }
+      ]
+    },
+    {
+      "case_id": "order-return-01",
+      "family": "order-return",
+      "variant": 1,
+      "tags": [
+        "context",
+        "customer-support",
+        "identifier"
+      ],
+      "turns": [
+        {
+          "turn_id": "order-return-01-turn-01",
+          "prompt": "I need help returning a winter jacket from order ORD-7300."
+        },
+        {
+          "turn_id": "order-return-01-turn-02",
+          "prompt": "The winter jacket arrived with a cracked part, and I noticed it immediately."
+        },
+        {
+          "turn_id": "order-return-01-turn-03",
+          "prompt": "Order ORD-7300 was delivered three days ago."
+        },
+        {
+          "turn_id": "order-return-01-turn-04",
+          "prompt": "For the winter jacket, I prefer a replacement instead of a refund."
+        },
+        {
+          "turn_id": "order-return-01-turn-05",
+          "prompt": "What evidence should I provide for order ORD-7300?"
+        },
+        {
+          "turn_id": "order-return-01-turn-06",
+          "prompt": "The winter jacket packaging is open but still available."
+        },
+        {
+          "turn_id": "order-return-01-turn-07",
+          "prompt": "Explain the likely next step for the winter jacket return."
+        },
+        {
+          "turn_id": "order-return-01-turn-08",
+          "prompt": "Draft a short support message mentioning order ORD-7300."
+        },
+        {
+          "turn_id": "order-return-01-turn-09",
+          "prompt": "Summarize the agreed return plan for the winter jacket."
+        },
+        {
+          "turn_id": "order-return-01-turn-10",
+          "prompt": "What deadline should I verify for order ORD-7300?"
+        }
+      ]
+    },
+    {
+      "case_id": "order-return-02",
+      "family": "order-return",
+      "variant": 2,
+      "tags": [
+        "context",
+        "customer-support",
+        "identifier"
+      ],
+      "turns": [
+        {
+          "turn_id": "order-return-02-turn-01",
+          "prompt": "I need help returning a coffee grinder from order ORD-7337."
+        },
+        {
+          "turn_id": "order-return-02-turn-02",
+          "prompt": "The coffee grinder arrived in the wrong size, and I noticed it immediately."
+        },
+        {
+          "turn_id": "order-return-02-turn-03",
+          "prompt": "Order ORD-7337 was delivered three days ago."
+        },
+        {
+          "turn_id": "order-return-02-turn-04",
+          "prompt": "For the coffee grinder, I prefer a replacement instead of a refund."
+        },
+        {
+          "turn_id": "order-return-02-turn-05",
+          "prompt": "What evidence should I provide for order ORD-7337?"
+        },
+        {
+          "turn_id": "order-return-02-turn-06",
+          "prompt": "The coffee grinder packaging is open but still available."
+        },
+        {
+          "turn_id": "order-return-02-turn-07",
+          "prompt": "Explain the likely next step for the coffee grinder return."
+        },
+        {
+          "turn_id": "order-return-02-turn-08",
+          "prompt": "Draft a short support message mentioning order ORD-7337."
+        },
+        {
+          "turn_id": "order-return-02-turn-09",
+          "prompt": "Summarize the agreed return plan for the coffee grinder."
+        },
+        {
+          "turn_id": "order-return-02-turn-10",
+          "prompt": "What deadline should I verify for order ORD-7337?"
+        }
+      ]
+    },
+    {
+      "case_id": "order-return-03",
+      "family": "order-return",
+      "variant": 3,
+      "tags": [
+        "context",
+        "customer-support",
+        "identifier"
+      ],
+      "turns": [
+        {
+          "turn_id": "order-return-03-turn-01",
+          "prompt": "I need help returning a desk chair from order ORD-7374."
+        },
+        {
+          "turn_id": "order-return-03-turn-02",
+          "prompt": "The desk chair arrived missing an accessory, and I noticed it immediately."
+        },
+        {
+          "turn_id": "order-return-03-turn-03",
+          "prompt": "Order ORD-7374 was delivered three days ago."
+        },
+        {
+          "turn_id": "order-return-03-turn-04",
+          "prompt": "For the desk chair, I prefer a replacement instead of a refund."
+        },
+        {
+          "turn_id": "order-return-03-turn-05",
+          "prompt": "What evidence should I provide for order ORD-7374?"
+        },
+        {
+          "turn_id": "order-return-03-turn-06",
+          "prompt": "The desk chair packaging is open but still available."
+        },
+        {
+          "turn_id": "order-return-03-turn-07",
+          "prompt": "Explain the likely next step for the desk chair return."
+        },
+        {
+          "turn_id": "order-return-03-turn-08",
+          "prompt": "Draft a short support message mentioning order ORD-7374."
+        },
+        {
+          "turn_id": "order-return-03-turn-09",
+          "prompt": "Summarize the agreed return plan for the desk chair."
+        },
+        {
+          "turn_id": "order-return-03-turn-10",
+          "prompt": "What deadline should I verify for order ORD-7374?"
+        }
+      ]
+    },
+    {
+      "case_id": "order-return-04",
+      "family": "order-return",
+      "variant": 4,
+      "tags": [
+        "context",
+        "customer-support",
+        "identifier"
+      ],
+      "turns": [
+        {
+          "turn_id": "order-return-04-turn-01",
+          "prompt": "I need help returning a running shoes from order ORD-7411."
+        },
+        {
+          "turn_id": "order-return-04-turn-02",
+          "prompt": "The running shoes arrived with visible stains, and I noticed it immediately."
+        },
+        {
+          "turn_id": "order-return-04-turn-03",
+          "prompt": "Order ORD-7411 was delivered three days ago."
+        },
+        {
+          "turn_id": "order-return-04-turn-04",
+          "prompt": "For the running shoes, I prefer a replacement instead of a refund."
+        },
+        {
+          "turn_id": "order-return-04-turn-05",
+          "prompt": "What evidence should I provide for order ORD-7411?"
+        },
+        {
+          "turn_id": "order-return-04-turn-06",
+          "prompt": "The running shoes packaging is open but still available."
+        },
+        {
+          "turn_id": "order-return-04-turn-07",
+          "prompt": "Explain the likely next step for the running shoes return."
+        },
+        {
+          "turn_id": "order-return-04-turn-08",
+          "prompt": "Draft a short support message mentioning order ORD-7411."
+        },
+        {
+          "turn_id": "order-return-04-turn-09",
+          "prompt": "Summarize the agreed return plan for the running shoes."
+        },
+        {
+          "turn_id": "order-return-04-turn-10",
+          "prompt": "What deadline should I verify for order ORD-7411?"
+        }
+      ]
+    },
+    {
+      "case_id": "order-return-05",
+      "family": "order-return",
+      "variant": 5,
+      "tags": [
+        "context",
+        "customer-support",
+        "identifier"
+      ],
+      "turns": [
+        {
+          "turn_id": "order-return-05-turn-01",
+          "prompt": "I need help returning a carry-on suitcase from order ORD-7448."
+        },
+        {
+          "turn_id": "order-return-05-turn-02",
+          "prompt": "The carry-on suitcase arrived and does not power on, and I noticed it immediately."
+        },
+        {
+          "turn_id": "order-return-05-turn-03",
+          "prompt": "Order ORD-7448 was delivered three days ago."
+        },
+        {
+          "turn_id": "order-return-05-turn-04",
+          "prompt": "For the carry-on suitcase, I prefer a replacement instead of a refund."
+        },
+        {
+          "turn_id": "order-return-05-turn-05",
+          "prompt": "What evidence should I provide for order ORD-7448?"
+        },
+        {
+          "turn_id": "order-return-05-turn-06",
+          "prompt": "The carry-on suitcase packaging is open but still available."
+        },
+        {
+          "turn_id": "order-return-05-turn-07",
+          "prompt": "Explain the likely next step for the carry-on suitcase return."
+        },
+        {
+          "turn_id": "order-return-05-turn-08",
+          "prompt": "Draft a short support message mentioning order ORD-7448."
+        },
+        {
+          "turn_id": "order-return-05-turn-09",
+          "prompt": "Summarize the agreed return plan for the carry-on suitcase."
+        },
+        {
+          "turn_id": "order-return-05-turn-10",
+          "prompt": "What deadline should I verify for order ORD-7448?"
+        }
+      ]
+    },
+    {
+      "case_id": "order-return-06",
+      "family": "order-return",
+      "variant": 6,
+      "tags": [
+        "context",
+        "customer-support",
+        "identifier"
+      ],
+      "turns": [
+        {
+          "turn_id": "order-return-06-turn-01",
+          "prompt": "I need help returning a standing lamp from order ORD-7485."
+        },
+        {
+          "turn_id": "order-return-06-turn-02",
+          "prompt": "The standing lamp arrived with a cracked part, and I noticed it immediately."
+        },
+        {
+          "turn_id": "order-return-06-turn-03",
+          "prompt": "Order ORD-7485 was delivered three days ago."
+        },
+        {
+          "turn_id": "order-return-06-turn-04",
+          "prompt": "For the standing lamp, I prefer a replacement instead of a refund."
+        },
+        {
+          "turn_id": "order-return-06-turn-05",
+          "prompt": "What evidence should I provide for order ORD-7485?"
+        },
+        {
+          "turn_id": "order-return-06-turn-06",
+          "prompt": "The standing lamp packaging is open but still available."
+        },
+        {
+          "turn_id": "order-return-06-turn-07",
+          "prompt": "Explain the likely next step for the standing lamp return."
+        },
+        {
+          "turn_id": "order-return-06-turn-08",
+          "prompt": "Draft a short support message mentioning order ORD-7485."
+        },
+        {
+          "turn_id": "order-return-06-turn-09",
+          "prompt": "Summarize the agreed return plan for the standing lamp."
+        },
+        {
+          "turn_id": "order-return-06-turn-10",
+          "prompt": "What deadline should I verify for order ORD-7485?"
+        }
+      ]
+    },
+    {
+      "case_id": "order-return-07",
+      "family": "order-return",
+      "variant": 7,
+      "tags": [
+        "context",
+        "customer-support",
+        "identifier"
+      ],
+      "turns": [
+        {
+          "turn_id": "order-return-07-turn-01",
+          "prompt": "I need help returning a yoga mat from order ORD-7522."
+        },
+        {
+          "turn_id": "order-return-07-turn-02",
+          "prompt": "The yoga mat arrived in the wrong size, and I noticed it immediately."
+        },
+        {
+          "turn_id": "order-return-07-turn-03",
+          "prompt": "Order ORD-7522 was delivered three days ago."
+        },
+        {
+          "turn_id": "order-return-07-turn-04",
+          "prompt": "For the yoga mat, I prefer a replacement instead of a refund."
+        },
+        {
+          "turn_id": "order-return-07-turn-05",
+          "prompt": "What evidence should I provide for order ORD-7522?"
+        },
+        {
+          "turn_id": "order-return-07-turn-06",
+          "prompt": "The yoga mat packaging is open but still available."
+        },
+        {
+          "turn_id": "order-return-07-turn-07",
+          "prompt": "Explain the likely next step for the yoga mat return."
+        },
+        {
+          "turn_id": "order-return-07-turn-08",
+          "prompt": "Draft a short support message mentioning order ORD-7522."
+        },
+        {
+          "turn_id": "order-return-07-turn-09",
+          "prompt": "Summarize the agreed return plan for the yoga mat."
+        },
+        {
+          "turn_id": "order-return-07-turn-10",
+          "prompt": "What deadline should I verify for order ORD-7522?"
+        }
+      ]
+    },
+    {
+      "case_id": "order-return-08",
+      "family": "order-return",
+      "variant": 8,
+      "tags": [
+        "context",
+        "customer-support",
+        "identifier"
+      ],
+      "turns": [
+        {
+          "turn_id": "order-return-08-turn-01",
+          "prompt": "I need help returning a rice cooker from order ORD-7559."
+        },
+        {
+          "turn_id": "order-return-08-turn-02",
+          "prompt": "The rice cooker arrived missing an accessory, and I noticed it immediately."
+        },
+        {
+          "turn_id": "order-return-08-turn-03",
+          "prompt": "Order ORD-7559 was delivered three days ago."
+        },
+        {
+          "turn_id": "order-return-08-turn-04",
+          "prompt": "For the rice cooker, I prefer a replacement instead of a refund."
+        },
+        {
+          "turn_id": "order-return-08-turn-05",
+          "prompt": "What evidence should I provide for order ORD-7559?"
+        },
+        {
+          "turn_id": "order-return-08-turn-06",
+          "prompt": "The rice cooker packaging is open but still available."
+        },
+        {
+          "turn_id": "order-return-08-turn-07",
+          "prompt": "Explain the likely next step for the rice cooker return."
+        },
+        {
+          "turn_id": "order-return-08-turn-08",
+          "prompt": "Draft a short support message mentioning order ORD-7559."
+        },
+        {
+          "turn_id": "order-return-08-turn-09",
+          "prompt": "Summarize the agreed return plan for the rice cooker."
+        },
+        {
+          "turn_id": "order-return-08-turn-10",
+          "prompt": "What deadline should I verify for order ORD-7559?"
+        }
+      ]
+    },
+    {
+      "case_id": "order-return-09",
+      "family": "order-return",
+      "variant": 9,
+      "tags": [
+        "context",
+        "customer-support",
+        "identifier"
+      ],
+      "turns": [
+        {
+          "turn_id": "order-return-09-turn-01",
+          "prompt": "I need help returning a office monitor from order ORD-7596."
+        },
+        {
+          "turn_id": "order-return-09-turn-02",
+          "prompt": "The office monitor arrived with visible stains, and I noticed it immediately."
+        },
+        {
+          "turn_id": "order-return-09-turn-03",
+          "prompt": "Order ORD-7596 was delivered three days ago."
+        },
+        {
+          "turn_id": "order-return-09-turn-04",
+          "prompt": "For the office monitor, I prefer a replacement instead of a refund."
+        },
+        {
+          "turn_id": "order-return-09-turn-05",
+          "prompt": "What evidence should I provide for order ORD-7596?"
+        },
+        {
+          "turn_id": "order-return-09-turn-06",
+          "prompt": "The office monitor packaging is open but still available."
+        },
+        {
+          "turn_id": "order-return-09-turn-07",
+          "prompt": "Explain the likely next step for the office monitor return."
+        },
+        {
+          "turn_id": "order-return-09-turn-08",
+          "prompt": "Draft a short support message mentioning order ORD-7596."
+        },
+        {
+          "turn_id": "order-return-09-turn-09",
+          "prompt": "Summarize the agreed return plan for the office monitor."
+        },
+        {
+          "turn_id": "order-return-09-turn-10",
+          "prompt": "What deadline should I verify for order ORD-7596?"
+        }
+      ]
+    },
+    {
+      "case_id": "order-return-10",
+      "family": "order-return",
+      "variant": 10,
+      "tags": [
+        "context",
+        "customer-support",
+        "identifier"
+      ],
+      "turns": [
+        {
+          "turn_id": "order-return-10-turn-01",
+          "prompt": "I need help returning a camping tent from order ORD-7633."
+        },
+        {
+          "turn_id": "order-return-10-turn-02",
+          "prompt": "The camping tent arrived and does not power on, and I noticed it immediately."
+        },
+        {
+          "turn_id": "order-return-10-turn-03",
+          "prompt": "Order ORD-7633 was delivered three days ago."
+        },
+        {
+          "turn_id": "order-return-10-turn-04",
+          "prompt": "For the camping tent, I prefer a replacement instead of a refund."
+        },
+        {
+          "turn_id": "order-return-10-turn-05",
+          "prompt": "What evidence should I provide for order ORD-7633?"
+        },
+        {
+          "turn_id": "order-return-10-turn-06",
+          "prompt": "The camping tent packaging is open but still available."
+        },
+        {
+          "turn_id": "order-return-10-turn-07",
+          "prompt": "Explain the likely next step for the camping tent return."
+        },
+        {
+          "turn_id": "order-return-10-turn-08",
+          "prompt": "Draft a short support message mentioning order ORD-7633."
+        },
+        {
+          "turn_id": "order-return-10-turn-09",
+          "prompt": "Summarize the agreed return plan for the camping tent."
+        },
+        {
+          "turn_id": "order-return-10-turn-10",
+          "prompt": "What deadline should I verify for order ORD-7633?"
+        }
+      ]
+    },
+    {
+      "case_id": "study-tutor-01",
+      "family": "study-tutor",
+      "variant": 1,
+      "tags": [
+        "context",
+        "education",
+        "recall"
+      ],
+      "turns": [
+        {
+          "turn_id": "study-tutor-01-turn-01",
+          "prompt": "Teach me the basics of photosynthesis at a middle-school level."
+        },
+        {
+          "turn_id": "study-tutor-01-turn-02",
+          "prompt": "Give me a concrete example of photosynthesis."
+        },
+        {
+          "turn_id": "study-tutor-01-turn-03",
+          "prompt": "Explain the hardest term in photosynthesis more simply."
+        },
+        {
+          "turn_id": "study-tutor-01-turn-04",
+          "prompt": "Ask me one short comprehension question about photosynthesis."
+        },
+        {
+          "turn_id": "study-tutor-01-turn-05",
+          "prompt": "For that photosynthesis question, my answer is partly correct; explain why."
+        },
+        {
+          "turn_id": "study-tutor-01-turn-06",
+          "prompt": "Connect photosynthesis to something from everyday life."
+        },
+        {
+          "turn_id": "study-tutor-01-turn-07",
+          "prompt": "Give me a common misconception about photosynthesis."
+        },
+        {
+          "turn_id": "study-tutor-01-turn-08",
+          "prompt": "Create a two-step practice problem on photosynthesis."
+        },
+        {
+          "turn_id": "study-tutor-01-turn-09",
+          "prompt": "Show a concise solution to the photosynthesis practice problem."
+        },
+        {
+          "turn_id": "study-tutor-01-turn-10",
+          "prompt": "Summarize the photosynthesis lesson as five memory cues."
+        }
+      ]
+    },
+    {
+      "case_id": "study-tutor-02",
+      "family": "study-tutor",
+      "variant": 2,
+      "tags": [
+        "context",
+        "education",
+        "recall"
+      ],
+      "turns": [
+        {
+          "turn_id": "study-tutor-02-turn-01",
+          "prompt": "Teach me the basics of quadratic equations at a high-school level."
+        },
+        {
+          "turn_id": "study-tutor-02-turn-02",
+          "prompt": "Give me a concrete example of quadratic equations."
+        },
+        {
+          "turn_id": "study-tutor-02-turn-03",
+          "prompt": "Explain the hardest term in quadratic equations more simply."
+        },
+        {
+          "turn_id": "study-tutor-02-turn-04",
+          "prompt": "Ask me one short comprehension question about quadratic equations."
+        },
+        {
+          "turn_id": "study-tutor-02-turn-05",
+          "prompt": "For that quadratic equations question, my answer is partly correct; explain why."
+        },
+        {
+          "turn_id": "study-tutor-02-turn-06",
+          "prompt": "Connect quadratic equations to something from everyday life."
+        },
+        {
+          "turn_id": "study-tutor-02-turn-07",
+          "prompt": "Give me a common misconception about quadratic equations."
+        },
+        {
+          "turn_id": "study-tutor-02-turn-08",
+          "prompt": "Create a two-step practice problem on quadratic equations."
+        },
+        {
+          "turn_id": "study-tutor-02-turn-09",
+          "prompt": "Show a concise solution to the quadratic equations practice problem."
+        },
+        {
+          "turn_id": "study-tutor-02-turn-10",
+          "prompt": "Summarize the quadratic equations lesson as five memory cues."
+        }
+      ]
+    },
+    {
+      "case_id": "study-tutor-03",
+      "family": "study-tutor",
+      "variant": 3,
+      "tags": [
+        "context",
+        "education",
+        "recall"
+      ],
+      "turns": [
+        {
+          "turn_id": "study-tutor-03-turn-01",
+          "prompt": "Teach me the basics of the French Revolution at a beginner college level."
+        },
+        {
+          "turn_id": "study-tutor-03-turn-02",
+          "prompt": "Give me a concrete example of the French Revolution."
+        },
+        {
+          "turn_id": "study-tutor-03-turn-03",
+          "prompt": "Explain the hardest term in the French Revolution more simply."
+        },
+        {
+          "turn_id": "study-tutor-03-turn-04",
+          "prompt": "Ask me one short comprehension question about the French Revolution."
+        },
+        {
+          "turn_id": "study-tutor-03-turn-05",
+          "prompt": "For that the French Revolution question, my answer is partly correct; explain why."
+        },
+        {
+          "turn_id": "study-tutor-03-turn-06",
+          "prompt": "Connect the French Revolution to something from everyday life."
+        },
+        {
+          "turn_id": "study-tutor-03-turn-07",
+          "prompt": "Give me a common misconception about the French Revolution."
+        },
+        {
+          "turn_id": "study-tutor-03-turn-08",
+          "prompt": "Create a two-step practice problem on the French Revolution."
+        },
+        {
+          "turn_id": "study-tutor-03-turn-09",
+          "prompt": "Show a concise solution to the the French Revolution practice problem."
+        },
+        {
+          "turn_id": "study-tutor-03-turn-10",
+          "prompt": "Summarize the the French Revolution lesson as five memory cues."
+        }
+      ]
+    },
+    {
+      "case_id": "study-tutor-04",
+      "family": "study-tutor",
+      "variant": 4,
+      "tags": [
+        "context",
+        "education",
+        "recall"
+      ],
+      "turns": [
+        {
+          "turn_id": "study-tutor-04-turn-01",
+          "prompt": "Teach me the basics of supply and demand at a middle-school level."
+        },
+        {
+          "turn_id": "study-tutor-04-turn-02",
+          "prompt": "Give me a concrete example of supply and demand."
+        },
+        {
+          "turn_id": "study-tutor-04-turn-03",
+          "prompt": "Explain the hardest term in supply and demand more simply."
+        },
+        {
+          "turn_id": "study-tutor-04-turn-04",
+          "prompt": "Ask me one short comprehension question about supply and demand."
+        },
+        {
+          "turn_id": "study-tutor-04-turn-05",
+          "prompt": "For that supply and demand question, my answer is partly correct; explain why."
+        },
+        {
+          "turn_id": "study-tutor-04-turn-06",
+          "prompt": "Connect supply and demand to something from everyday life."
+        },
+        {
+          "turn_id": "study-tutor-04-turn-07",
+          "prompt": "Give me a common misconception about supply and demand."
+        },
+        {
+          "turn_id": "study-tutor-04-turn-08",
+          "prompt": "Create a two-step practice problem on supply and demand."
+        },
+        {
+          "turn_id": "study-tutor-04-turn-09",
+          "prompt": "Show a concise solution to the supply and demand practice problem."
+        },
+        {
+          "turn_id": "study-tutor-04-turn-10",
+          "prompt": "Summarize the supply and demand lesson as five memory cues."
+        }
+      ]
+    },
+    {
+      "case_id": "study-tutor-05",
+      "family": "study-tutor",
+      "variant": 5,
+      "tags": [
+        "context",
+        "education",
+        "recall"
+      ],
+      "turns": [
+        {
+          "turn_id": "study-tutor-05-turn-01",
+          "prompt": "Teach me the basics of cell division at a high-school level."
+        },
+        {
+          "turn_id": "study-tutor-05-turn-02",
+          "prompt": "Give me a concrete example of cell division."
+        },
+        {
+          "turn_id": "study-tutor-05-turn-03",
+          "prompt": "Explain the hardest term in cell division more simply."
+        },
+        {
+          "turn_id": "study-tutor-05-turn-04",
+          "prompt": "Ask me one short comprehension question about cell division."
+        },
+        {
+          "turn_id": "study-tutor-05-turn-05",
+          "prompt": "For that cell division question, my answer is partly correct; explain why."
+        },
+        {
+          "turn_id": "study-tutor-05-turn-06",
+          "prompt": "Connect cell division to something from everyday life."
+        },
+        {
+          "turn_id": "study-tutor-05-turn-07",
+          "prompt": "Give me a common misconception about cell division."
+        },
+        {
+          "turn_id": "study-tutor-05-turn-08",
+          "prompt": "Create a two-step practice problem on cell division."
+        },
+        {
+          "turn_id": "study-tutor-05-turn-09",
+          "prompt": "Show a concise solution to the cell division practice problem."
+        },
+        {
+          "turn_id": "study-tutor-05-turn-10",
+          "prompt": "Summarize the cell division lesson as five memory cues."
+        }
+      ]
+    },
+    {
+      "case_id": "study-tutor-06",
+      "family": "study-tutor",
+      "variant": 6,
+      "tags": [
+        "context",
+        "education",
+        "recall"
+      ],
+      "turns": [
+        {
+          "turn_id": "study-tutor-06-turn-01",
+          "prompt": "Teach me the basics of probability at a beginner college level."
+        },
+        {
+          "turn_id": "study-tutor-06-turn-02",
+          "prompt": "Give me a concrete example of probability."
+        },
+        {
+          "turn_id": "study-tutor-06-turn-03",
+          "prompt": "Explain the hardest term in probability more simply."
+        },
+        {
+          "turn_id": "study-tutor-06-turn-04",
+          "prompt": "Ask me one short comprehension question about probability."
+        },
+        {
+          "turn_id": "study-tutor-06-turn-05",
+          "prompt": "For that probability question, my answer is partly correct; explain why."
+        },
+        {
+          "turn_id": "study-tutor-06-turn-06",
+          "prompt": "Connect probability to something from everyday life."
+        },
+        {
+          "turn_id": "study-tutor-06-turn-07",
+          "prompt": "Give me a common misconception about probability."
+        },
+        {
+          "turn_id": "study-tutor-06-turn-08",
+          "prompt": "Create a two-step practice problem on probability."
+        },
+        {
+          "turn_id": "study-tutor-06-turn-09",
+          "prompt": "Show a concise solution to the probability practice problem."
+        },
+        {
+          "turn_id": "study-tutor-06-turn-10",
+          "prompt": "Summarize the probability lesson as five memory cues."
+        }
+      ]
+    },
+    {
+      "case_id": "study-tutor-07",
+      "family": "study-tutor",
+      "variant": 7,
+      "tags": [
+        "context",
+        "education",
+        "recall"
+      ],
+      "turns": [
+        {
+          "turn_id": "study-tutor-07-turn-01",
+          "prompt": "Teach me the basics of plate tectonics at a middle-school level."
+        },
+        {
+          "turn_id": "study-tutor-07-turn-02",
+          "prompt": "Give me a concrete example of plate tectonics."
+        },
+        {
+          "turn_id": "study-tutor-07-turn-03",
+          "prompt": "Explain the hardest term in plate tectonics more simply."
+        },
+        {
+          "turn_id": "study-tutor-07-turn-04",
+          "prompt": "Ask me one short comprehension question about plate tectonics."
+        },
+        {
+          "turn_id": "study-tutor-07-turn-05",
+          "prompt": "For that plate tectonics question, my answer is partly correct; explain why."
+        },
+        {
+          "turn_id": "study-tutor-07-turn-06",
+          "prompt": "Connect plate tectonics to something from everyday life."
+        },
+        {
+          "turn_id": "study-tutor-07-turn-07",
+          "prompt": "Give me a common misconception about plate tectonics."
+        },
+        {
+          "turn_id": "study-tutor-07-turn-08",
+          "prompt": "Create a two-step practice problem on plate tectonics."
+        },
+        {
+          "turn_id": "study-tutor-07-turn-09",
+          "prompt": "Show a concise solution to the plate tectonics practice problem."
+        },
+        {
+          "turn_id": "study-tutor-07-turn-10",
+          "prompt": "Summarize the plate tectonics lesson as five memory cues."
+        }
+      ]
+    },
+    {
+      "case_id": "study-tutor-08",
+      "family": "study-tutor",
+      "variant": 8,
+      "tags": [
+        "context",
+        "education",
+        "recall"
+      ],
+      "turns": [
+        {
+          "turn_id": "study-tutor-08-turn-01",
+          "prompt": "Teach me the basics of computer networks at a high-school level."
+        },
+        {
+          "turn_id": "study-tutor-08-turn-02",
+          "prompt": "Give me a concrete example of computer networks."
+        },
+        {
+          "turn_id": "study-tutor-08-turn-03",
+          "prompt": "Explain the hardest term in computer networks more simply."
+        },
+        {
+          "turn_id": "study-tutor-08-turn-04",
+          "prompt": "Ask me one short comprehension question about computer networks."
+        },
+        {
+          "turn_id": "study-tutor-08-turn-05",
+          "prompt": "For that computer networks question, my answer is partly correct; explain why."
+        },
+        {
+          "turn_id": "study-tutor-08-turn-06",
+          "prompt": "Connect computer networks to something from everyday life."
+        },
+        {
+          "turn_id": "study-tutor-08-turn-07",
+          "prompt": "Give me a common misconception about computer networks."
+        },
+        {
+          "turn_id": "study-tutor-08-turn-08",
+          "prompt": "Create a two-step practice problem on computer networks."
+        },
+        {
+          "turn_id": "study-tutor-08-turn-09",
+          "prompt": "Show a concise solution to the computer networks practice problem."
+        },
+        {
+          "turn_id": "study-tutor-08-turn-10",
+          "prompt": "Summarize the computer networks lesson as five memory cues."
+        }
+      ]
+    },
+    {
+      "case_id": "study-tutor-09",
+      "family": "study-tutor",
+      "variant": 9,
+      "tags": [
+        "context",
+        "education",
+        "recall"
+      ],
+      "turns": [
+        {
+          "turn_id": "study-tutor-09-turn-01",
+          "prompt": "Teach me the basics of Shakespearean tragedy at a beginner college level."
+        },
+        {
+          "turn_id": "study-tutor-09-turn-02",
+          "prompt": "Give me a concrete example of Shakespearean tragedy."
+        },
+        {
+          "turn_id": "study-tutor-09-turn-03",
+          "prompt": "Explain the hardest term in Shakespearean tragedy more simply."
+        },
+        {
+          "turn_id": "study-tutor-09-turn-04",
+          "prompt": "Ask me one short comprehension question about Shakespearean tragedy."
+        },
+        {
+          "turn_id": "study-tutor-09-turn-05",
+          "prompt": "For that Shakespearean tragedy question, my answer is partly correct; explain why."
+        },
+        {
+          "turn_id": "study-tutor-09-turn-06",
+          "prompt": "Connect Shakespearean tragedy to something from everyday life."
+        },
+        {
+          "turn_id": "study-tutor-09-turn-07",
+          "prompt": "Give me a common misconception about Shakespearean tragedy."
+        },
+        {
+          "turn_id": "study-tutor-09-turn-08",
+          "prompt": "Create a two-step practice problem on Shakespearean tragedy."
+        },
+        {
+          "turn_id": "study-tutor-09-turn-09",
+          "prompt": "Show a concise solution to the Shakespearean tragedy practice problem."
+        },
+        {
+          "turn_id": "study-tutor-09-turn-10",
+          "prompt": "Summarize the Shakespearean tragedy lesson as five memory cues."
+        }
+      ]
+    },
+    {
+      "case_id": "study-tutor-10",
+      "family": "study-tutor",
+      "variant": 10,
+      "tags": [
+        "context",
+        "education",
+        "recall"
+      ],
+      "turns": [
+        {
+          "turn_id": "study-tutor-10-turn-01",
+          "prompt": "Teach me the basics of basic statistics at a middle-school level."
+        },
+        {
+          "turn_id": "study-tutor-10-turn-02",
+          "prompt": "Give me a concrete example of basic statistics."
+        },
+        {
+          "turn_id": "study-tutor-10-turn-03",
+          "prompt": "Explain the hardest term in basic statistics more simply."
+        },
+        {
+          "turn_id": "study-tutor-10-turn-04",
+          "prompt": "Ask me one short comprehension question about basic statistics."
+        },
+        {
+          "turn_id": "study-tutor-10-turn-05",
+          "prompt": "For that basic statistics question, my answer is partly correct; explain why."
+        },
+        {
+          "turn_id": "study-tutor-10-turn-06",
+          "prompt": "Connect basic statistics to something from everyday life."
+        },
+        {
+          "turn_id": "study-tutor-10-turn-07",
+          "prompt": "Give me a common misconception about basic statistics."
+        },
+        {
+          "turn_id": "study-tutor-10-turn-08",
+          "prompt": "Create a two-step practice problem on basic statistics."
+        },
+        {
+          "turn_id": "study-tutor-10-turn-09",
+          "prompt": "Show a concise solution to the basic statistics practice problem."
+        },
+        {
+          "turn_id": "study-tutor-10-turn-10",
+          "prompt": "Summarize the basic statistics lesson as five memory cues."
+        }
+      ]
+    },
+    {
+      "case_id": "project-planning-01",
+      "family": "project-planning",
+      "variant": 1,
+      "tags": [
+        "context",
+        "project",
+        "prioritization"
+      ],
+      "turns": [
+        {
+          "turn_id": "project-planning-01-turn-01",
+          "prompt": "Help me structure a mobile app launch with a 4-week deadline."
+        },
+        {
+          "turn_id": "project-planning-01-turn-02",
+          "prompt": "The mobile app launch team has 3 people with mixed experience."
+        },
+        {
+          "turn_id": "project-planning-01-turn-03",
+          "prompt": "Name the first milestone for the mobile app launch."
+        },
+        {
+          "turn_id": "project-planning-01-turn-04",
+          "prompt": "List the biggest schedule risk for the mobile app launch."
+        },
+        {
+          "turn_id": "project-planning-01-turn-05",
+          "prompt": "Reduce the initial mobile app launch scope by about twenty percent."
+        },
+        {
+          "turn_id": "project-planning-01-turn-06",
+          "prompt": "Assign clear roles for the smaller mobile app launch plan."
+        },
+        {
+          "turn_id": "project-planning-01-turn-07",
+          "prompt": "Suggest one measurable success criterion for the mobile app launch."
+        },
+        {
+          "turn_id": "project-planning-01-turn-08",
+          "prompt": "Create a brief weekly check-in agenda for the mobile app launch."
+        },
+        {
+          "turn_id": "project-planning-01-turn-09",
+          "prompt": "Summarize the current mobile app launch plan and its tradeoffs."
+        },
+        {
+          "turn_id": "project-planning-01-turn-10",
+          "prompt": "What decision about the mobile app launch must happen today?"
+        }
+      ]
+    },
+    {
+      "case_id": "project-planning-02",
+      "family": "project-planning",
+      "variant": 2,
+      "tags": [
+        "context",
+        "project",
+        "prioritization"
+      ],
+      "turns": [
+        {
+          "turn_id": "project-planning-02-turn-01",
+          "prompt": "Help me structure a customer onboarding redesign with a 5-week deadline."
+        },
+        {
+          "turn_id": "project-planning-02-turn-02",
+          "prompt": "The customer onboarding redesign team has 4 people with mixed experience."
+        },
+        {
+          "turn_id": "project-planning-02-turn-03",
+          "prompt": "Name the first milestone for the customer onboarding redesign."
+        },
+        {
+          "turn_id": "project-planning-02-turn-04",
+          "prompt": "List the biggest schedule risk for the customer onboarding redesign."
+        },
+        {
+          "turn_id": "project-planning-02-turn-05",
+          "prompt": "Reduce the initial customer onboarding redesign scope by about twenty percent."
+        },
+        {
+          "turn_id": "project-planning-02-turn-06",
+          "prompt": "Assign clear roles for the smaller customer onboarding redesign plan."
+        },
+        {
+          "turn_id": "project-planning-02-turn-07",
+          "prompt": "Suggest one measurable success criterion for the customer onboarding redesign."
+        },
+        {
+          "turn_id": "project-planning-02-turn-08",
+          "prompt": "Create a brief weekly check-in agenda for the customer onboarding redesign."
+        },
+        {
+          "turn_id": "project-planning-02-turn-09",
+          "prompt": "Summarize the current customer onboarding redesign plan and its tradeoffs."
+        },
+        {
+          "turn_id": "project-planning-02-turn-10",
+          "prompt": "What decision about the customer onboarding redesign must happen today?"
+        }
+      ]
+    },
+    {
+      "case_id": "project-planning-03",
+      "family": "project-planning",
+      "variant": 3,
+      "tags": [
+        "context",
+        "project",
+        "prioritization"
+      ],
+      "turns": [
+        {
+          "turn_id": "project-planning-03-turn-01",
+          "prompt": "Help me structure a warehouse inventory migration with a 6-week deadline."
+        },
+        {
+          "turn_id": "project-planning-03-turn-02",
+          "prompt": "The warehouse inventory migration team has 5 people with mixed experience."
+        },
+        {
+          "turn_id": "project-planning-03-turn-03",
+          "prompt": "Name the first milestone for the warehouse inventory migration."
+        },
+        {
+          "turn_id": "project-planning-03-turn-04",
+          "prompt": "List the biggest schedule risk for the warehouse inventory migration."
+        },
+        {
+          "turn_id": "project-planning-03-turn-05",
+          "prompt": "Reduce the initial warehouse inventory migration scope by about twenty percent."
+        },
+        {
+          "turn_id": "project-planning-03-turn-06",
+          "prompt": "Assign clear roles for the smaller warehouse inventory migration plan."
+        },
+        {
+          "turn_id": "project-planning-03-turn-07",
+          "prompt": "Suggest one measurable success criterion for the warehouse inventory migration."
+        },
+        {
+          "turn_id": "project-planning-03-turn-08",
+          "prompt": "Create a brief weekly check-in agenda for the warehouse inventory migration."
+        },
+        {
+          "turn_id": "project-planning-03-turn-09",
+          "prompt": "Summarize the current warehouse inventory migration plan and its tradeoffs."
+        },
+        {
+          "turn_id": "project-planning-03-turn-10",
+          "prompt": "What decision about the warehouse inventory migration must happen today?"
+        }
+      ]
+    },
+    {
+      "case_id": "project-planning-04",
+      "family": "project-planning",
+      "variant": 4,
+      "tags": [
+        "context",
+        "project",
+        "prioritization"
+      ],
+      "turns": [
+        {
+          "turn_id": "project-planning-04-turn-01",
+          "prompt": "Help me structure a community fundraising event with a 7-week deadline."
+        },
+        {
+          "turn_id": "project-planning-04-turn-02",
+          "prompt": "The community fundraising event team has 6 people with mixed experience."
+        },
+        {
+          "turn_id": "project-planning-04-turn-03",
+          "prompt": "Name the first milestone for the community fundraising event."
+        },
+        {
+          "turn_id": "project-planning-04-turn-04",
+          "prompt": "List the biggest schedule risk for the community fundraising event."
+        },
+        {
+          "turn_id": "project-planning-04-turn-05",
+          "prompt": "Reduce the initial community fundraising event scope by about twenty percent."
+        },
+        {
+          "turn_id": "project-planning-04-turn-06",
+          "prompt": "Assign clear roles for the smaller community fundraising event plan."
+        },
+        {
+          "turn_id": "project-planning-04-turn-07",
+          "prompt": "Suggest one measurable success criterion for the community fundraising event."
+        },
+        {
+          "turn_id": "project-planning-04-turn-08",
+          "prompt": "Create a brief weekly check-in agenda for the community fundraising event."
+        },
+        {
+          "turn_id": "project-planning-04-turn-09",
+          "prompt": "Summarize the current community fundraising event plan and its tradeoffs."
+        },
+        {
+          "turn_id": "project-planning-04-turn-10",
+          "prompt": "What decision about the community fundraising event must happen today?"
+        }
+      ]
+    },
+    {
+      "case_id": "project-planning-05",
+      "family": "project-planning",
+      "variant": 5,
+      "tags": [
+        "context",
+        "project",
+        "prioritization"
+      ],
+      "turns": [
+        {
+          "turn_id": "project-planning-05-turn-01",
+          "prompt": "Help me structure a website accessibility audit with a 8-week deadline."
+        },
+        {
+          "turn_id": "project-planning-05-turn-02",
+          "prompt": "The website accessibility audit team has 7 people with mixed experience."
+        },
+        {
+          "turn_id": "project-planning-05-turn-03",
+          "prompt": "Name the first milestone for the website accessibility audit."
+        },
+        {
+          "turn_id": "project-planning-05-turn-04",
+          "prompt": "List the biggest schedule risk for the website accessibility audit."
+        },
+        {
+          "turn_id": "project-planning-05-turn-05",
+          "prompt": "Reduce the initial website accessibility audit scope by about twenty percent."
+        },
+        {
+          "turn_id": "project-planning-05-turn-06",
+          "prompt": "Assign clear roles for the smaller website accessibility audit plan."
+        },
+        {
+          "turn_id": "project-planning-05-turn-07",
+          "prompt": "Suggest one measurable success criterion for the website accessibility audit."
+        },
+        {
+          "turn_id": "project-planning-05-turn-08",
+          "prompt": "Create a brief weekly check-in agenda for the website accessibility audit."
+        },
+        {
+          "turn_id": "project-planning-05-turn-09",
+          "prompt": "Summarize the current website accessibility audit plan and its tradeoffs."
+        },
+        {
+          "turn_id": "project-planning-05-turn-10",
+          "prompt": "What decision about the website accessibility audit must happen today?"
+        }
+      ]
+    },
+    {
+      "case_id": "project-planning-06",
+      "family": "project-planning",
+      "variant": 6,
+      "tags": [
+        "context",
+        "project",
+        "prioritization"
+      ],
+      "turns": [
+        {
+          "turn_id": "project-planning-06-turn-01",
+          "prompt": "Help me structure a quarterly sales campaign with a 9-week deadline."
+        },
+        {
+          "turn_id": "project-planning-06-turn-02",
+          "prompt": "The quarterly sales campaign team has 8 people with mixed experience."
+        },
+        {
+          "turn_id": "project-planning-06-turn-03",
+          "prompt": "Name the first milestone for the quarterly sales campaign."
+        },
+        {
+          "turn_id": "project-planning-06-turn-04",
+          "prompt": "List the biggest schedule risk for the quarterly sales campaign."
+        },
+        {
+          "turn_id": "project-planning-06-turn-05",
+          "prompt": "Reduce the initial quarterly sales campaign scope by about twenty percent."
+        },
+        {
+          "turn_id": "project-planning-06-turn-06",
+          "prompt": "Assign clear roles for the smaller quarterly sales campaign plan."
+        },
+        {
+          "turn_id": "project-planning-06-turn-07",
+          "prompt": "Suggest one measurable success criterion for the quarterly sales campaign."
+        },
+        {
+          "turn_id": "project-planning-06-turn-08",
+          "prompt": "Create a brief weekly check-in agenda for the quarterly sales campaign."
+        },
+        {
+          "turn_id": "project-planning-06-turn-09",
+          "prompt": "Summarize the current quarterly sales campaign plan and its tradeoffs."
+        },
+        {
+          "turn_id": "project-planning-06-turn-10",
+          "prompt": "What decision about the quarterly sales campaign must happen today?"
+        }
+      ]
+    },
+    {
+      "case_id": "project-planning-07",
+      "family": "project-planning",
+      "variant": 7,
+      "tags": [
+        "context",
+        "project",
+        "prioritization"
+      ],
+      "turns": [
+        {
+          "turn_id": "project-planning-07-turn-01",
+          "prompt": "Help me structure a office relocation with a 10-week deadline."
+        },
+        {
+          "turn_id": "project-planning-07-turn-02",
+          "prompt": "The office relocation team has 3 people with mixed experience."
+        },
+        {
+          "turn_id": "project-planning-07-turn-03",
+          "prompt": "Name the first milestone for the office relocation."
+        },
+        {
+          "turn_id": "project-planning-07-turn-04",
+          "prompt": "List the biggest schedule risk for the office relocation."
+        },
+        {
+          "turn_id": "project-planning-07-turn-05",
+          "prompt": "Reduce the initial office relocation scope by about twenty percent."
+        },
+        {
+          "turn_id": "project-planning-07-turn-06",
+          "prompt": "Assign clear roles for the smaller office relocation plan."
+        },
+        {
+          "turn_id": "project-planning-07-turn-07",
+          "prompt": "Suggest one measurable success criterion for the office relocation."
+        },
+        {
+          "turn_id": "project-planning-07-turn-08",
+          "prompt": "Create a brief weekly check-in agenda for the office relocation."
+        },
+        {
+          "turn_id": "project-planning-07-turn-09",
+          "prompt": "Summarize the current office relocation plan and its tradeoffs."
+        },
+        {
+          "turn_id": "project-planning-07-turn-10",
+          "prompt": "What decision about the office relocation must happen today?"
+        }
+      ]
+    },
+    {
+      "case_id": "project-planning-08",
+      "family": "project-planning",
+      "variant": 8,
+      "tags": [
+        "context",
+        "project",
+        "prioritization"
+      ],
+      "turns": [
+        {
+          "turn_id": "project-planning-08-turn-01",
+          "prompt": "Help me structure a data quality cleanup with a 11-week deadline."
+        },
+        {
+          "turn_id": "project-planning-08-turn-02",
+          "prompt": "The data quality cleanup team has 4 people with mixed experience."
+        },
+        {
+          "turn_id": "project-planning-08-turn-03",
+          "prompt": "Name the first milestone for the data quality cleanup."
+        },
+        {
+          "turn_id": "project-planning-08-turn-04",
+          "prompt": "List the biggest schedule risk for the data quality cleanup."
+        },
+        {
+          "turn_id": "project-planning-08-turn-05",
+          "prompt": "Reduce the initial data quality cleanup scope by about twenty percent."
+        },
+        {
+          "turn_id": "project-planning-08-turn-06",
+          "prompt": "Assign clear roles for the smaller data quality cleanup plan."
+        },
+        {
+          "turn_id": "project-planning-08-turn-07",
+          "prompt": "Suggest one measurable success criterion for the data quality cleanup."
+        },
+        {
+          "turn_id": "project-planning-08-turn-08",
+          "prompt": "Create a brief weekly check-in agenda for the data quality cleanup."
+        },
+        {
+          "turn_id": "project-planning-08-turn-09",
+          "prompt": "Summarize the current data quality cleanup plan and its tradeoffs."
+        },
+        {
+          "turn_id": "project-planning-08-turn-10",
+          "prompt": "What decision about the data quality cleanup must happen today?"
+        }
+      ]
+    },
+    {
+      "case_id": "project-planning-09",
+      "family": "project-planning",
+      "variant": 9,
+      "tags": [
+        "context",
+        "project",
+        "prioritization"
+      ],
+      "turns": [
+        {
+          "turn_id": "project-planning-09-turn-01",
+          "prompt": "Help me structure a podcast pilot season with a 12-week deadline."
+        },
+        {
+          "turn_id": "project-planning-09-turn-02",
+          "prompt": "The podcast pilot season team has 5 people with mixed experience."
+        },
+        {
+          "turn_id": "project-planning-09-turn-03",
+          "prompt": "Name the first milestone for the podcast pilot season."
+        },
+        {
+          "turn_id": "project-planning-09-turn-04",
+          "prompt": "List the biggest schedule risk for the podcast pilot season."
+        },
+        {
+          "turn_id": "project-planning-09-turn-05",
+          "prompt": "Reduce the initial podcast pilot season scope by about twenty percent."
+        },
+        {
+          "turn_id": "project-planning-09-turn-06",
+          "prompt": "Assign clear roles for the smaller podcast pilot season plan."
+        },
+        {
+          "turn_id": "project-planning-09-turn-07",
+          "prompt": "Suggest one measurable success criterion for the podcast pilot season."
+        },
+        {
+          "turn_id": "project-planning-09-turn-08",
+          "prompt": "Create a brief weekly check-in agenda for the podcast pilot season."
+        },
+        {
+          "turn_id": "project-planning-09-turn-09",
+          "prompt": "Summarize the current podcast pilot season plan and its tradeoffs."
+        },
+        {
+          "turn_id": "project-planning-09-turn-10",
+          "prompt": "What decision about the podcast pilot season must happen today?"
+        }
+      ]
+    },
+    {
+      "case_id": "project-planning-10",
+      "family": "project-planning",
+      "variant": 10,
+      "tags": [
+        "context",
+        "project",
+        "prioritization"
+      ],
+      "turns": [
+        {
+          "turn_id": "project-planning-10-turn-01",
+          "prompt": "Help me structure a employee mentoring program with a 13-week deadline."
+        },
+        {
+          "turn_id": "project-planning-10-turn-02",
+          "prompt": "The employee mentoring program team has 6 people with mixed experience."
+        },
+        {
+          "turn_id": "project-planning-10-turn-03",
+          "prompt": "Name the first milestone for the employee mentoring program."
+        },
+        {
+          "turn_id": "project-planning-10-turn-04",
+          "prompt": "List the biggest schedule risk for the employee mentoring program."
+        },
+        {
+          "turn_id": "project-planning-10-turn-05",
+          "prompt": "Reduce the initial employee mentoring program scope by about twenty percent."
+        },
+        {
+          "turn_id": "project-planning-10-turn-06",
+          "prompt": "Assign clear roles for the smaller employee mentoring program plan."
+        },
+        {
+          "turn_id": "project-planning-10-turn-07",
+          "prompt": "Suggest one measurable success criterion for the employee mentoring program."
+        },
+        {
+          "turn_id": "project-planning-10-turn-08",
+          "prompt": "Create a brief weekly check-in agenda for the employee mentoring program."
+        },
+        {
+          "turn_id": "project-planning-10-turn-09",
+          "prompt": "Summarize the current employee mentoring program plan and its tradeoffs."
+        },
+        {
+          "turn_id": "project-planning-10-turn-10",
+          "prompt": "What decision about the employee mentoring program must happen today?"
+        }
+      ]
+    },
+    {
+      "case_id": "smart-home-01",
+      "family": "smart-home",
+      "variant": 1,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "safety"
+      ],
+      "turns": [
+        {
+          "turn_id": "smart-home-01-turn-01",
+          "prompt": "My living-room thermostat is dropping offline; walk me through safe checks."
+        },
+        {
+          "turn_id": "smart-home-01-turn-02",
+          "prompt": "The living-room thermostat still appears online in its mobile app."
+        },
+        {
+          "turn_id": "smart-home-01-turn-03",
+          "prompt": "Power cycling did not fix the living-room thermostat."
+        },
+        {
+          "turn_id": "smart-home-01-turn-04",
+          "prompt": "Which network detail matters most for the living-room thermostat?"
+        },
+        {
+          "turn_id": "smart-home-01-turn-05",
+          "prompt": "Explain how to verify that detail on the living-room thermostat."
+        },
+        {
+          "turn_id": "smart-home-01-turn-06",
+          "prompt": "The living-room thermostat uses a guest network; update your advice."
+        },
+        {
+          "turn_id": "smart-home-01-turn-07",
+          "prompt": "Give me a low-risk next step for the living-room thermostat."
+        },
+        {
+          "turn_id": "smart-home-01-turn-08",
+          "prompt": "What symptom would make the living-room thermostat unsafe to use?"
+        },
+        {
+          "turn_id": "smart-home-01-turn-09",
+          "prompt": "Summarize the living-room thermostat troubleshooting sequence."
+        },
+        {
+          "turn_id": "smart-home-01-turn-10",
+          "prompt": "What information should I give the living-room thermostat manufacturer?"
+        }
+      ]
+    },
+    {
+      "case_id": "smart-home-02",
+      "family": "smart-home",
+      "variant": 2,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "safety"
+      ],
+      "turns": [
+        {
+          "turn_id": "smart-home-02-turn-01",
+          "prompt": "My front-door camera is sending delayed alerts; walk me through safe checks."
+        },
+        {
+          "turn_id": "smart-home-02-turn-02",
+          "prompt": "The front-door camera still appears online in its mobile app."
+        },
+        {
+          "turn_id": "smart-home-02-turn-03",
+          "prompt": "Power cycling did not fix the front-door camera."
+        },
+        {
+          "turn_id": "smart-home-02-turn-04",
+          "prompt": "Which network detail matters most for the front-door camera?"
+        },
+        {
+          "turn_id": "smart-home-02-turn-05",
+          "prompt": "Explain how to verify that detail on the front-door camera."
+        },
+        {
+          "turn_id": "smart-home-02-turn-06",
+          "prompt": "The front-door camera uses a guest network; update your advice."
+        },
+        {
+          "turn_id": "smart-home-02-turn-07",
+          "prompt": "Give me a low-risk next step for the front-door camera."
+        },
+        {
+          "turn_id": "smart-home-02-turn-08",
+          "prompt": "What symptom would make the front-door camera unsafe to use?"
+        },
+        {
+          "turn_id": "smart-home-02-turn-09",
+          "prompt": "Summarize the front-door camera troubleshooting sequence."
+        },
+        {
+          "turn_id": "smart-home-02-turn-10",
+          "prompt": "What information should I give the front-door camera manufacturer?"
+        }
+      ]
+    },
+    {
+      "case_id": "smart-home-03",
+      "family": "smart-home",
+      "variant": 3,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "safety"
+      ],
+      "turns": [
+        {
+          "turn_id": "smart-home-03-turn-01",
+          "prompt": "My bedroom smart bulb is ignoring schedules; walk me through safe checks."
+        },
+        {
+          "turn_id": "smart-home-03-turn-02",
+          "prompt": "The bedroom smart bulb still appears online in its mobile app."
+        },
+        {
+          "turn_id": "smart-home-03-turn-03",
+          "prompt": "Power cycling did not fix the bedroom smart bulb."
+        },
+        {
+          "turn_id": "smart-home-03-turn-04",
+          "prompt": "Which network detail matters most for the bedroom smart bulb?"
+        },
+        {
+          "turn_id": "smart-home-03-turn-05",
+          "prompt": "Explain how to verify that detail on the bedroom smart bulb."
+        },
+        {
+          "turn_id": "smart-home-03-turn-06",
+          "prompt": "The bedroom smart bulb uses a guest network; update your advice."
+        },
+        {
+          "turn_id": "smart-home-03-turn-07",
+          "prompt": "Give me a low-risk next step for the bedroom smart bulb."
+        },
+        {
+          "turn_id": "smart-home-03-turn-08",
+          "prompt": "What symptom would make the bedroom smart bulb unsafe to use?"
+        },
+        {
+          "turn_id": "smart-home-03-turn-09",
+          "prompt": "Summarize the bedroom smart bulb troubleshooting sequence."
+        },
+        {
+          "turn_id": "smart-home-03-turn-10",
+          "prompt": "What information should I give the bedroom smart bulb manufacturer?"
+        }
+      ]
+    },
+    {
+      "case_id": "smart-home-04",
+      "family": "smart-home",
+      "variant": 4,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "safety"
+      ],
+      "turns": [
+        {
+          "turn_id": "smart-home-04-turn-01",
+          "prompt": "My kitchen voice display is reporting the wrong status; walk me through safe checks."
+        },
+        {
+          "turn_id": "smart-home-04-turn-02",
+          "prompt": "The kitchen voice display still appears online in its mobile app."
+        },
+        {
+          "turn_id": "smart-home-04-turn-03",
+          "prompt": "Power cycling did not fix the kitchen voice display."
+        },
+        {
+          "turn_id": "smart-home-04-turn-04",
+          "prompt": "Which network detail matters most for the kitchen voice display?"
+        },
+        {
+          "turn_id": "smart-home-04-turn-05",
+          "prompt": "Explain how to verify that detail on the kitchen voice display."
+        },
+        {
+          "turn_id": "smart-home-04-turn-06",
+          "prompt": "The kitchen voice display uses a guest network; update your advice."
+        },
+        {
+          "turn_id": "smart-home-04-turn-07",
+          "prompt": "Give me a low-risk next step for the kitchen voice display."
+        },
+        {
+          "turn_id": "smart-home-04-turn-08",
+          "prompt": "What symptom would make the kitchen voice display unsafe to use?"
+        },
+        {
+          "turn_id": "smart-home-04-turn-09",
+          "prompt": "Summarize the kitchen voice display troubleshooting sequence."
+        },
+        {
+          "turn_id": "smart-home-04-turn-10",
+          "prompt": "What information should I give the kitchen voice display manufacturer?"
+        }
+      ]
+    },
+    {
+      "case_id": "smart-home-05",
+      "family": "smart-home",
+      "variant": 5,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "safety"
+      ],
+      "turns": [
+        {
+          "turn_id": "smart-home-05-turn-01",
+          "prompt": "My garage door controller is restarting unexpectedly; walk me through safe checks."
+        },
+        {
+          "turn_id": "smart-home-05-turn-02",
+          "prompt": "The garage door controller still appears online in its mobile app."
+        },
+        {
+          "turn_id": "smart-home-05-turn-03",
+          "prompt": "Power cycling did not fix the garage door controller."
+        },
+        {
+          "turn_id": "smart-home-05-turn-04",
+          "prompt": "Which network detail matters most for the garage door controller?"
+        },
+        {
+          "turn_id": "smart-home-05-turn-05",
+          "prompt": "Explain how to verify that detail on the garage door controller."
+        },
+        {
+          "turn_id": "smart-home-05-turn-06",
+          "prompt": "The garage door controller uses a guest network; update your advice."
+        },
+        {
+          "turn_id": "smart-home-05-turn-07",
+          "prompt": "Give me a low-risk next step for the garage door controller."
+        },
+        {
+          "turn_id": "smart-home-05-turn-08",
+          "prompt": "What symptom would make the garage door controller unsafe to use?"
+        },
+        {
+          "turn_id": "smart-home-05-turn-09",
+          "prompt": "Summarize the garage door controller troubleshooting sequence."
+        },
+        {
+          "turn_id": "smart-home-05-turn-10",
+          "prompt": "What information should I give the garage door controller manufacturer?"
+        }
+      ]
+    },
+    {
+      "case_id": "smart-home-06",
+      "family": "smart-home",
+      "variant": 6,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "safety"
+      ],
+      "turns": [
+        {
+          "turn_id": "smart-home-06-turn-01",
+          "prompt": "My garden irrigation hub is dropping offline; walk me through safe checks."
+        },
+        {
+          "turn_id": "smart-home-06-turn-02",
+          "prompt": "The garden irrigation hub still appears online in its mobile app."
+        },
+        {
+          "turn_id": "smart-home-06-turn-03",
+          "prompt": "Power cycling did not fix the garden irrigation hub."
+        },
+        {
+          "turn_id": "smart-home-06-turn-04",
+          "prompt": "Which network detail matters most for the garden irrigation hub?"
+        },
+        {
+          "turn_id": "smart-home-06-turn-05",
+          "prompt": "Explain how to verify that detail on the garden irrigation hub."
+        },
+        {
+          "turn_id": "smart-home-06-turn-06",
+          "prompt": "The garden irrigation hub uses a guest network; update your advice."
+        },
+        {
+          "turn_id": "smart-home-06-turn-07",
+          "prompt": "Give me a low-risk next step for the garden irrigation hub."
+        },
+        {
+          "turn_id": "smart-home-06-turn-08",
+          "prompt": "What symptom would make the garden irrigation hub unsafe to use?"
+        },
+        {
+          "turn_id": "smart-home-06-turn-09",
+          "prompt": "Summarize the garden irrigation hub troubleshooting sequence."
+        },
+        {
+          "turn_id": "smart-home-06-turn-10",
+          "prompt": "What information should I give the garden irrigation hub manufacturer?"
+        }
+      ]
+    },
+    {
+      "case_id": "smart-home-07",
+      "family": "smart-home",
+      "variant": 7,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "safety"
+      ],
+      "turns": [
+        {
+          "turn_id": "smart-home-07-turn-01",
+          "prompt": "My hallway motion sensor is sending delayed alerts; walk me through safe checks."
+        },
+        {
+          "turn_id": "smart-home-07-turn-02",
+          "prompt": "The hallway motion sensor still appears online in its mobile app."
+        },
+        {
+          "turn_id": "smart-home-07-turn-03",
+          "prompt": "Power cycling did not fix the hallway motion sensor."
+        },
+        {
+          "turn_id": "smart-home-07-turn-04",
+          "prompt": "Which network detail matters most for the hallway motion sensor?"
+        },
+        {
+          "turn_id": "smart-home-07-turn-05",
+          "prompt": "Explain how to verify that detail on the hallway motion sensor."
+        },
+        {
+          "turn_id": "smart-home-07-turn-06",
+          "prompt": "The hallway motion sensor uses a guest network; update your advice."
+        },
+        {
+          "turn_id": "smart-home-07-turn-07",
+          "prompt": "Give me a low-risk next step for the hallway motion sensor."
+        },
+        {
+          "turn_id": "smart-home-07-turn-08",
+          "prompt": "What symptom would make the hallway motion sensor unsafe to use?"
+        },
+        {
+          "turn_id": "smart-home-07-turn-09",
+          "prompt": "Summarize the hallway motion sensor troubleshooting sequence."
+        },
+        {
+          "turn_id": "smart-home-07-turn-10",
+          "prompt": "What information should I give the hallway motion sensor manufacturer?"
+        }
+      ]
+    },
+    {
+      "case_id": "smart-home-08",
+      "family": "smart-home",
+      "variant": 8,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "safety"
+      ],
+      "turns": [
+        {
+          "turn_id": "smart-home-08-turn-01",
+          "prompt": "My office air purifier is ignoring schedules; walk me through safe checks."
+        },
+        {
+          "turn_id": "smart-home-08-turn-02",
+          "prompt": "The office air purifier still appears online in its mobile app."
+        },
+        {
+          "turn_id": "smart-home-08-turn-03",
+          "prompt": "Power cycling did not fix the office air purifier."
+        },
+        {
+          "turn_id": "smart-home-08-turn-04",
+          "prompt": "Which network detail matters most for the office air purifier?"
+        },
+        {
+          "turn_id": "smart-home-08-turn-05",
+          "prompt": "Explain how to verify that detail on the office air purifier."
+        },
+        {
+          "turn_id": "smart-home-08-turn-06",
+          "prompt": "The office air purifier uses a guest network; update your advice."
+        },
+        {
+          "turn_id": "smart-home-08-turn-07",
+          "prompt": "Give me a low-risk next step for the office air purifier."
+        },
+        {
+          "turn_id": "smart-home-08-turn-08",
+          "prompt": "What symptom would make the office air purifier unsafe to use?"
+        },
+        {
+          "turn_id": "smart-home-08-turn-09",
+          "prompt": "Summarize the office air purifier troubleshooting sequence."
+        },
+        {
+          "turn_id": "smart-home-08-turn-10",
+          "prompt": "What information should I give the office air purifier manufacturer?"
+        }
+      ]
+    },
+    {
+      "case_id": "smart-home-09",
+      "family": "smart-home",
+      "variant": 9,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "safety"
+      ],
+      "turns": [
+        {
+          "turn_id": "smart-home-09-turn-01",
+          "prompt": "My nursery night light is reporting the wrong status; walk me through safe checks."
+        },
+        {
+          "turn_id": "smart-home-09-turn-02",
+          "prompt": "The nursery night light still appears online in its mobile app."
+        },
+        {
+          "turn_id": "smart-home-09-turn-03",
+          "prompt": "Power cycling did not fix the nursery night light."
+        },
+        {
+          "turn_id": "smart-home-09-turn-04",
+          "prompt": "Which network detail matters most for the nursery night light?"
+        },
+        {
+          "turn_id": "smart-home-09-turn-05",
+          "prompt": "Explain how to verify that detail on the nursery night light."
+        },
+        {
+          "turn_id": "smart-home-09-turn-06",
+          "prompt": "The nursery night light uses a guest network; update your advice."
+        },
+        {
+          "turn_id": "smart-home-09-turn-07",
+          "prompt": "Give me a low-risk next step for the nursery night light."
+        },
+        {
+          "turn_id": "smart-home-09-turn-08",
+          "prompt": "What symptom would make the nursery night light unsafe to use?"
+        },
+        {
+          "turn_id": "smart-home-09-turn-09",
+          "prompt": "Summarize the nursery night light troubleshooting sequence."
+        },
+        {
+          "turn_id": "smart-home-09-turn-10",
+          "prompt": "What information should I give the nursery night light manufacturer?"
+        }
+      ]
+    },
+    {
+      "case_id": "smart-home-10",
+      "family": "smart-home",
+      "variant": 10,
+      "tags": [
+        "context",
+        "troubleshooting",
+        "safety"
+      ],
+      "turns": [
+        {
+          "turn_id": "smart-home-10-turn-01",
+          "prompt": "My basement leak detector is restarting unexpectedly; walk me through safe checks."
+        },
+        {
+          "turn_id": "smart-home-10-turn-02",
+          "prompt": "The basement leak detector still appears online in its mobile app."
+        },
+        {
+          "turn_id": "smart-home-10-turn-03",
+          "prompt": "Power cycling did not fix the basement leak detector."
+        },
+        {
+          "turn_id": "smart-home-10-turn-04",
+          "prompt": "Which network detail matters most for the basement leak detector?"
+        },
+        {
+          "turn_id": "smart-home-10-turn-05",
+          "prompt": "Explain how to verify that detail on the basement leak detector."
+        },
+        {
+          "turn_id": "smart-home-10-turn-06",
+          "prompt": "The basement leak detector uses a guest network; update your advice."
+        },
+        {
+          "turn_id": "smart-home-10-turn-07",
+          "prompt": "Give me a low-risk next step for the basement leak detector."
+        },
+        {
+          "turn_id": "smart-home-10-turn-08",
+          "prompt": "What symptom would make the basement leak detector unsafe to use?"
+        },
+        {
+          "turn_id": "smart-home-10-turn-09",
+          "prompt": "Summarize the basement leak detector troubleshooting sequence."
+        },
+        {
+          "turn_id": "smart-home-10-turn-10",
+          "prompt": "What information should I give the basement leak detector manufacturer?"
+        }
+      ]
+    },
+    {
+      "case_id": "meeting-scheduling-01",
+      "family": "meeting-scheduling",
+      "variant": 1,
+      "tags": [
+        "context",
+        "scheduling",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "meeting-scheduling-01-turn-01",
+          "prompt": "Help me organize a design review for Monday."
+        },
+        {
+          "turn_id": "meeting-scheduling-01-turn-02",
+          "prompt": "The design review needs 3 attendees and forty-five minutes."
+        },
+        {
+          "turn_id": "meeting-scheduling-01-turn-03",
+          "prompt": "Propose a 9:00 AM start for the design review."
+        },
+        {
+          "turn_id": "meeting-scheduling-01-turn-04",
+          "prompt": "For the design review, include ten minutes for questions."
+        },
+        {
+          "turn_id": "meeting-scheduling-01-turn-05",
+          "prompt": "Move the design review from Monday to the following business day."
+        },
+        {
+          "turn_id": "meeting-scheduling-01-turn-06",
+          "prompt": "One design review attendee is remote in another time zone."
+        },
+        {
+          "turn_id": "meeting-scheduling-01-turn-07",
+          "prompt": "Draft a concise agenda for the design review."
+        },
+        {
+          "turn_id": "meeting-scheduling-01-turn-08",
+          "prompt": "Write a short invitation description for the design review."
+        },
+        {
+          "turn_id": "meeting-scheduling-01-turn-09",
+          "prompt": "Read back the updated design review schedule."
+        },
+        {
+          "turn_id": "meeting-scheduling-01-turn-10",
+          "prompt": "What scheduling risk remains for the design review?"
+        }
+      ]
+    },
+    {
+      "case_id": "meeting-scheduling-02",
+      "family": "meeting-scheduling",
+      "variant": 2,
+      "tags": [
+        "context",
+        "scheduling",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "meeting-scheduling-02-turn-01",
+          "prompt": "Help me organize a vendor negotiation for Tuesday."
+        },
+        {
+          "turn_id": "meeting-scheduling-02-turn-02",
+          "prompt": "The vendor negotiation needs 4 attendees and forty-five minutes."
+        },
+        {
+          "turn_id": "meeting-scheduling-02-turn-03",
+          "prompt": "Propose a 10:00 AM start for the vendor negotiation."
+        },
+        {
+          "turn_id": "meeting-scheduling-02-turn-04",
+          "prompt": "For the vendor negotiation, include ten minutes for questions."
+        },
+        {
+          "turn_id": "meeting-scheduling-02-turn-05",
+          "prompt": "Move the vendor negotiation from Tuesday to the following business day."
+        },
+        {
+          "turn_id": "meeting-scheduling-02-turn-06",
+          "prompt": "One vendor negotiation attendee is remote in another time zone."
+        },
+        {
+          "turn_id": "meeting-scheduling-02-turn-07",
+          "prompt": "Draft a concise agenda for the vendor negotiation."
+        },
+        {
+          "turn_id": "meeting-scheduling-02-turn-08",
+          "prompt": "Write a short invitation description for the vendor negotiation."
+        },
+        {
+          "turn_id": "meeting-scheduling-02-turn-09",
+          "prompt": "Read back the updated vendor negotiation schedule."
+        },
+        {
+          "turn_id": "meeting-scheduling-02-turn-10",
+          "prompt": "What scheduling risk remains for the vendor negotiation?"
+        }
+      ]
+    },
+    {
+      "case_id": "meeting-scheduling-03",
+      "family": "meeting-scheduling",
+      "variant": 3,
+      "tags": [
+        "context",
+        "scheduling",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "meeting-scheduling-03-turn-01",
+          "prompt": "Help me organize a quarterly planning for Wednesday."
+        },
+        {
+          "turn_id": "meeting-scheduling-03-turn-02",
+          "prompt": "The quarterly planning needs 5 attendees and forty-five minutes."
+        },
+        {
+          "turn_id": "meeting-scheduling-03-turn-03",
+          "prompt": "Propose a 11:00 AM start for the quarterly planning."
+        },
+        {
+          "turn_id": "meeting-scheduling-03-turn-04",
+          "prompt": "For the quarterly planning, include ten minutes for questions."
+        },
+        {
+          "turn_id": "meeting-scheduling-03-turn-05",
+          "prompt": "Move the quarterly planning from Wednesday to the following business day."
+        },
+        {
+          "turn_id": "meeting-scheduling-03-turn-06",
+          "prompt": "One quarterly planning attendee is remote in another time zone."
+        },
+        {
+          "turn_id": "meeting-scheduling-03-turn-07",
+          "prompt": "Draft a concise agenda for the quarterly planning."
+        },
+        {
+          "turn_id": "meeting-scheduling-03-turn-08",
+          "prompt": "Write a short invitation description for the quarterly planning."
+        },
+        {
+          "turn_id": "meeting-scheduling-03-turn-09",
+          "prompt": "Read back the updated quarterly planning schedule."
+        },
+        {
+          "turn_id": "meeting-scheduling-03-turn-10",
+          "prompt": "What scheduling risk remains for the quarterly planning?"
+        }
+      ]
+    },
+    {
+      "case_id": "meeting-scheduling-04",
+      "family": "meeting-scheduling",
+      "variant": 4,
+      "tags": [
+        "context",
+        "scheduling",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "meeting-scheduling-04-turn-01",
+          "prompt": "Help me organize a incident retrospective for Thursday."
+        },
+        {
+          "turn_id": "meeting-scheduling-04-turn-02",
+          "prompt": "The incident retrospective needs 6 attendees and forty-five minutes."
+        },
+        {
+          "turn_id": "meeting-scheduling-04-turn-03",
+          "prompt": "Propose a 12:00 AM start for the incident retrospective."
+        },
+        {
+          "turn_id": "meeting-scheduling-04-turn-04",
+          "prompt": "For the incident retrospective, include ten minutes for questions."
+        },
+        {
+          "turn_id": "meeting-scheduling-04-turn-05",
+          "prompt": "Move the incident retrospective from Thursday to the following business day."
+        },
+        {
+          "turn_id": "meeting-scheduling-04-turn-06",
+          "prompt": "One incident retrospective attendee is remote in another time zone."
+        },
+        {
+          "turn_id": "meeting-scheduling-04-turn-07",
+          "prompt": "Draft a concise agenda for the incident retrospective."
+        },
+        {
+          "turn_id": "meeting-scheduling-04-turn-08",
+          "prompt": "Write a short invitation description for the incident retrospective."
+        },
+        {
+          "turn_id": "meeting-scheduling-04-turn-09",
+          "prompt": "Read back the updated incident retrospective schedule."
+        },
+        {
+          "turn_id": "meeting-scheduling-04-turn-10",
+          "prompt": "What scheduling risk remains for the incident retrospective?"
+        }
+      ]
+    },
+    {
+      "case_id": "meeting-scheduling-05",
+      "family": "meeting-scheduling",
+      "variant": 5,
+      "tags": [
+        "context",
+        "scheduling",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "meeting-scheduling-05-turn-01",
+          "prompt": "Help me organize a candidate interview for Friday."
+        },
+        {
+          "turn_id": "meeting-scheduling-05-turn-02",
+          "prompt": "The candidate interview needs 7 attendees and forty-five minutes."
+        },
+        {
+          "turn_id": "meeting-scheduling-05-turn-03",
+          "prompt": "Propose a 13:00 AM start for the candidate interview."
+        },
+        {
+          "turn_id": "meeting-scheduling-05-turn-04",
+          "prompt": "For the candidate interview, include ten minutes for questions."
+        },
+        {
+          "turn_id": "meeting-scheduling-05-turn-05",
+          "prompt": "Move the candidate interview from Friday to the following business day."
+        },
+        {
+          "turn_id": "meeting-scheduling-05-turn-06",
+          "prompt": "One candidate interview attendee is remote in another time zone."
+        },
+        {
+          "turn_id": "meeting-scheduling-05-turn-07",
+          "prompt": "Draft a concise agenda for the candidate interview."
+        },
+        {
+          "turn_id": "meeting-scheduling-05-turn-08",
+          "prompt": "Write a short invitation description for the candidate interview."
+        },
+        {
+          "turn_id": "meeting-scheduling-05-turn-09",
+          "prompt": "Read back the updated candidate interview schedule."
+        },
+        {
+          "turn_id": "meeting-scheduling-05-turn-10",
+          "prompt": "What scheduling risk remains for the candidate interview?"
+        }
+      ]
+    },
+    {
+      "case_id": "meeting-scheduling-06",
+      "family": "meeting-scheduling",
+      "variant": 6,
+      "tags": [
+        "context",
+        "scheduling",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "meeting-scheduling-06-turn-01",
+          "prompt": "Help me organize a budget review for Monday."
+        },
+        {
+          "turn_id": "meeting-scheduling-06-turn-02",
+          "prompt": "The budget review needs 8 attendees and forty-five minutes."
+        },
+        {
+          "turn_id": "meeting-scheduling-06-turn-03",
+          "prompt": "Propose a 9:00 AM start for the budget review."
+        },
+        {
+          "turn_id": "meeting-scheduling-06-turn-04",
+          "prompt": "For the budget review, include ten minutes for questions."
+        },
+        {
+          "turn_id": "meeting-scheduling-06-turn-05",
+          "prompt": "Move the budget review from Monday to the following business day."
+        },
+        {
+          "turn_id": "meeting-scheduling-06-turn-06",
+          "prompt": "One budget review attendee is remote in another time zone."
+        },
+        {
+          "turn_id": "meeting-scheduling-06-turn-07",
+          "prompt": "Draft a concise agenda for the budget review."
+        },
+        {
+          "turn_id": "meeting-scheduling-06-turn-08",
+          "prompt": "Write a short invitation description for the budget review."
+        },
+        {
+          "turn_id": "meeting-scheduling-06-turn-09",
+          "prompt": "Read back the updated budget review schedule."
+        },
+        {
+          "turn_id": "meeting-scheduling-06-turn-10",
+          "prompt": "What scheduling risk remains for the budget review?"
+        }
+      ]
+    },
+    {
+      "case_id": "meeting-scheduling-07",
+      "family": "meeting-scheduling",
+      "variant": 7,
+      "tags": [
+        "context",
+        "scheduling",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "meeting-scheduling-07-turn-01",
+          "prompt": "Help me organize a research kickoff for Tuesday."
+        },
+        {
+          "turn_id": "meeting-scheduling-07-turn-02",
+          "prompt": "The research kickoff needs 9 attendees and forty-five minutes."
+        },
+        {
+          "turn_id": "meeting-scheduling-07-turn-03",
+          "prompt": "Propose a 10:00 AM start for the research kickoff."
+        },
+        {
+          "turn_id": "meeting-scheduling-07-turn-04",
+          "prompt": "For the research kickoff, include ten minutes for questions."
+        },
+        {
+          "turn_id": "meeting-scheduling-07-turn-05",
+          "prompt": "Move the research kickoff from Tuesday to the following business day."
+        },
+        {
+          "turn_id": "meeting-scheduling-07-turn-06",
+          "prompt": "One research kickoff attendee is remote in another time zone."
+        },
+        {
+          "turn_id": "meeting-scheduling-07-turn-07",
+          "prompt": "Draft a concise agenda for the research kickoff."
+        },
+        {
+          "turn_id": "meeting-scheduling-07-turn-08",
+          "prompt": "Write a short invitation description for the research kickoff."
+        },
+        {
+          "turn_id": "meeting-scheduling-07-turn-09",
+          "prompt": "Read back the updated research kickoff schedule."
+        },
+        {
+          "turn_id": "meeting-scheduling-07-turn-10",
+          "prompt": "What scheduling risk remains for the research kickoff?"
+        }
+      ]
+    },
+    {
+      "case_id": "meeting-scheduling-08",
+      "family": "meeting-scheduling",
+      "variant": 8,
+      "tags": [
+        "context",
+        "scheduling",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "meeting-scheduling-08-turn-01",
+          "prompt": "Help me organize a customer feedback call for Wednesday."
+        },
+        {
+          "turn_id": "meeting-scheduling-08-turn-02",
+          "prompt": "The customer feedback call needs 10 attendees and forty-five minutes."
+        },
+        {
+          "turn_id": "meeting-scheduling-08-turn-03",
+          "prompt": "Propose a 11:00 AM start for the customer feedback call."
+        },
+        {
+          "turn_id": "meeting-scheduling-08-turn-04",
+          "prompt": "For the customer feedback call, include ten minutes for questions."
+        },
+        {
+          "turn_id": "meeting-scheduling-08-turn-05",
+          "prompt": "Move the customer feedback call from Wednesday to the following business day."
+        },
+        {
+          "turn_id": "meeting-scheduling-08-turn-06",
+          "prompt": "One customer feedback call attendee is remote in another time zone."
+        },
+        {
+          "turn_id": "meeting-scheduling-08-turn-07",
+          "prompt": "Draft a concise agenda for the customer feedback call."
+        },
+        {
+          "turn_id": "meeting-scheduling-08-turn-08",
+          "prompt": "Write a short invitation description for the customer feedback call."
+        },
+        {
+          "turn_id": "meeting-scheduling-08-turn-09",
+          "prompt": "Read back the updated customer feedback call schedule."
+        },
+        {
+          "turn_id": "meeting-scheduling-08-turn-10",
+          "prompt": "What scheduling risk remains for the customer feedback call?"
+        }
+      ]
+    },
+    {
+      "case_id": "meeting-scheduling-09",
+      "family": "meeting-scheduling",
+      "variant": 9,
+      "tags": [
+        "context",
+        "scheduling",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "meeting-scheduling-09-turn-01",
+          "prompt": "Help me organize a security assessment for Thursday."
+        },
+        {
+          "turn_id": "meeting-scheduling-09-turn-02",
+          "prompt": "The security assessment needs 11 attendees and forty-five minutes."
+        },
+        {
+          "turn_id": "meeting-scheduling-09-turn-03",
+          "prompt": "Propose a 12:00 AM start for the security assessment."
+        },
+        {
+          "turn_id": "meeting-scheduling-09-turn-04",
+          "prompt": "For the security assessment, include ten minutes for questions."
+        },
+        {
+          "turn_id": "meeting-scheduling-09-turn-05",
+          "prompt": "Move the security assessment from Thursday to the following business day."
+        },
+        {
+          "turn_id": "meeting-scheduling-09-turn-06",
+          "prompt": "One security assessment attendee is remote in another time zone."
+        },
+        {
+          "turn_id": "meeting-scheduling-09-turn-07",
+          "prompt": "Draft a concise agenda for the security assessment."
+        },
+        {
+          "turn_id": "meeting-scheduling-09-turn-08",
+          "prompt": "Write a short invitation description for the security assessment."
+        },
+        {
+          "turn_id": "meeting-scheduling-09-turn-09",
+          "prompt": "Read back the updated security assessment schedule."
+        },
+        {
+          "turn_id": "meeting-scheduling-09-turn-10",
+          "prompt": "What scheduling risk remains for the security assessment?"
+        }
+      ]
+    },
+    {
+      "case_id": "meeting-scheduling-10",
+      "family": "meeting-scheduling",
+      "variant": 10,
+      "tags": [
+        "context",
+        "scheduling",
+        "correction"
+      ],
+      "turns": [
+        {
+          "turn_id": "meeting-scheduling-10-turn-01",
+          "prompt": "Help me organize a release readiness check for Friday."
+        },
+        {
+          "turn_id": "meeting-scheduling-10-turn-02",
+          "prompt": "The release readiness check needs 12 attendees and forty-five minutes."
+        },
+        {
+          "turn_id": "meeting-scheduling-10-turn-03",
+          "prompt": "Propose a 13:00 AM start for the release readiness check."
+        },
+        {
+          "turn_id": "meeting-scheduling-10-turn-04",
+          "prompt": "For the release readiness check, include ten minutes for questions."
+        },
+        {
+          "turn_id": "meeting-scheduling-10-turn-05",
+          "prompt": "Move the release readiness check from Friday to the following business day."
+        },
+        {
+          "turn_id": "meeting-scheduling-10-turn-06",
+          "prompt": "One release readiness check attendee is remote in another time zone."
+        },
+        {
+          "turn_id": "meeting-scheduling-10-turn-07",
+          "prompt": "Draft a concise agenda for the release readiness check."
+        },
+        {
+          "turn_id": "meeting-scheduling-10-turn-08",
+          "prompt": "Write a short invitation description for the release readiness check."
+        },
+        {
+          "turn_id": "meeting-scheduling-10-turn-09",
+          "prompt": "Read back the updated release readiness check schedule."
+        },
+        {
+          "turn_id": "meeting-scheduling-10-turn-10",
+          "prompt": "What scheduling risk remains for the release readiness check?"
+        }
+      ]
+    },
+    {
+      "case_id": "budget-coaching-01",
+      "family": "budget-coaching",
+      "variant": 1,
+      "tags": [
+        "context",
+        "numeric",
+        "planning"
+      ],
+      "turns": [
+        {
+          "turn_id": "budget-coaching-01-turn-01",
+          "prompt": "Help me build an emergency fund over the next 4 months."
+        },
+        {
+          "turn_id": "budget-coaching-01-turn-02",
+          "prompt": "For my goal to build an emergency fund, I can set aside 120 dollars monthly."
+        },
+        {
+          "turn_id": "budget-coaching-01-turn-03",
+          "prompt": "Name the first expense category to review so I can build an emergency fund."
+        },
+        {
+          "turn_id": "budget-coaching-01-turn-04",
+          "prompt": "Give me a weekly spending limit that supports my plan to build an emergency fund."
+        },
+        {
+          "turn_id": "budget-coaching-01-turn-05",
+          "prompt": "I forgot an annual insurance bill; revise the plan to build an emergency fund."
+        },
+        {
+          "turn_id": "budget-coaching-01-turn-06",
+          "prompt": "Keep a small entertainment allowance while I build an emergency fund."
+        },
+        {
+          "turn_id": "budget-coaching-01-turn-07",
+          "prompt": "Suggest one automatic transfer for the goal to build an emergency fund."
+        },
+        {
+          "turn_id": "budget-coaching-01-turn-08",
+          "prompt": "What progress number should I track while I build an emergency fund?"
+        },
+        {
+          "turn_id": "budget-coaching-01-turn-09",
+          "prompt": "Summarize the monthly plan to build an emergency fund."
+        },
+        {
+          "turn_id": "budget-coaching-01-turn-10",
+          "prompt": "What is the biggest assumption in the plan to build an emergency fund?"
+        }
+      ]
+    },
+    {
+      "case_id": "budget-coaching-02",
+      "family": "budget-coaching",
+      "variant": 2,
+      "tags": [
+        "context",
+        "numeric",
+        "planning"
+      ],
+      "turns": [
+        {
+          "turn_id": "budget-coaching-02-turn-01",
+          "prompt": "Help me save for a bicycle over the next 5 months."
+        },
+        {
+          "turn_id": "budget-coaching-02-turn-02",
+          "prompt": "For my goal to save for a bicycle, I can set aside 155 dollars monthly."
+        },
+        {
+          "turn_id": "budget-coaching-02-turn-03",
+          "prompt": "Name the first expense category to review so I can save for a bicycle."
+        },
+        {
+          "turn_id": "budget-coaching-02-turn-04",
+          "prompt": "Give me a weekly spending limit that supports my plan to save for a bicycle."
+        },
+        {
+          "turn_id": "budget-coaching-02-turn-05",
+          "prompt": "I forgot an annual insurance bill; revise the plan to save for a bicycle."
+        },
+        {
+          "turn_id": "budget-coaching-02-turn-06",
+          "prompt": "Keep a small entertainment allowance while I save for a bicycle."
+        },
+        {
+          "turn_id": "budget-coaching-02-turn-07",
+          "prompt": "Suggest one automatic transfer for the goal to save for a bicycle."
+        },
+        {
+          "turn_id": "budget-coaching-02-turn-08",
+          "prompt": "What progress number should I track while I save for a bicycle?"
+        },
+        {
+          "turn_id": "budget-coaching-02-turn-09",
+          "prompt": "Summarize the monthly plan to save for a bicycle."
+        },
+        {
+          "turn_id": "budget-coaching-02-turn-10",
+          "prompt": "What is the biggest assumption in the plan to save for a bicycle?"
+        }
+      ]
+    },
+    {
+      "case_id": "budget-coaching-03",
+      "family": "budget-coaching",
+      "variant": 3,
+      "tags": [
+        "context",
+        "numeric",
+        "planning"
+      ],
+      "turns": [
+        {
+          "turn_id": "budget-coaching-03-turn-01",
+          "prompt": "Help me reduce dining expenses over the next 6 months."
+        },
+        {
+          "turn_id": "budget-coaching-03-turn-02",
+          "prompt": "For my goal to reduce dining expenses, I can set aside 190 dollars monthly."
+        },
+        {
+          "turn_id": "budget-coaching-03-turn-03",
+          "prompt": "Name the first expense category to review so I can reduce dining expenses."
+        },
+        {
+          "turn_id": "budget-coaching-03-turn-04",
+          "prompt": "Give me a weekly spending limit that supports my plan to reduce dining expenses."
+        },
+        {
+          "turn_id": "budget-coaching-03-turn-05",
+          "prompt": "I forgot an annual insurance bill; revise the plan to reduce dining expenses."
+        },
+        {
+          "turn_id": "budget-coaching-03-turn-06",
+          "prompt": "Keep a small entertainment allowance while I reduce dining expenses."
+        },
+        {
+          "turn_id": "budget-coaching-03-turn-07",
+          "prompt": "Suggest one automatic transfer for the goal to reduce dining expenses."
+        },
+        {
+          "turn_id": "budget-coaching-03-turn-08",
+          "prompt": "What progress number should I track while I reduce dining expenses?"
+        },
+        {
+          "turn_id": "budget-coaching-03-turn-09",
+          "prompt": "Summarize the monthly plan to reduce dining expenses."
+        },
+        {
+          "turn_id": "budget-coaching-03-turn-10",
+          "prompt": "What is the biggest assumption in the plan to reduce dining expenses?"
+        }
+      ]
+    },
+    {
+      "case_id": "budget-coaching-04",
+      "family": "budget-coaching",
+      "variant": 4,
+      "tags": [
+        "context",
+        "numeric",
+        "planning"
+      ],
+      "turns": [
+        {
+          "turn_id": "budget-coaching-04-turn-01",
+          "prompt": "Help me pay down a credit card over the next 7 months."
+        },
+        {
+          "turn_id": "budget-coaching-04-turn-02",
+          "prompt": "For my goal to pay down a credit card, I can set aside 225 dollars monthly."
+        },
+        {
+          "turn_id": "budget-coaching-04-turn-03",
+          "prompt": "Name the first expense category to review so I can pay down a credit card."
+        },
+        {
+          "turn_id": "budget-coaching-04-turn-04",
+          "prompt": "Give me a weekly spending limit that supports my plan to pay down a credit card."
+        },
+        {
+          "turn_id": "budget-coaching-04-turn-05",
+          "prompt": "I forgot an annual insurance bill; revise the plan to pay down a credit card."
+        },
+        {
+          "turn_id": "budget-coaching-04-turn-06",
+          "prompt": "Keep a small entertainment allowance while I pay down a credit card."
+        },
+        {
+          "turn_id": "budget-coaching-04-turn-07",
+          "prompt": "Suggest one automatic transfer for the goal to pay down a credit card."
+        },
+        {
+          "turn_id": "budget-coaching-04-turn-08",
+          "prompt": "What progress number should I track while I pay down a credit card?"
+        },
+        {
+          "turn_id": "budget-coaching-04-turn-09",
+          "prompt": "Summarize the monthly plan to pay down a credit card."
+        },
+        {
+          "turn_id": "budget-coaching-04-turn-10",
+          "prompt": "What is the biggest assumption in the plan to pay down a credit card?"
+        }
+      ]
+    },
+    {
+      "case_id": "budget-coaching-05",
+      "family": "budget-coaching",
+      "variant": 5,
+      "tags": [
+        "context",
+        "numeric",
+        "planning"
+      ],
+      "turns": [
+        {
+          "turn_id": "budget-coaching-05-turn-01",
+          "prompt": "Help me plan a modest vacation over the next 8 months."
+        },
+        {
+          "turn_id": "budget-coaching-05-turn-02",
+          "prompt": "For my goal to plan a modest vacation, I can set aside 260 dollars monthly."
+        },
+        {
+          "turn_id": "budget-coaching-05-turn-03",
+          "prompt": "Name the first expense category to review so I can plan a modest vacation."
+        },
+        {
+          "turn_id": "budget-coaching-05-turn-04",
+          "prompt": "Give me a weekly spending limit that supports my plan to plan a modest vacation."
+        },
+        {
+          "turn_id": "budget-coaching-05-turn-05",
+          "prompt": "I forgot an annual insurance bill; revise the plan to plan a modest vacation."
+        },
+        {
+          "turn_id": "budget-coaching-05-turn-06",
+          "prompt": "Keep a small entertainment allowance while I plan a modest vacation."
+        },
+        {
+          "turn_id": "budget-coaching-05-turn-07",
+          "prompt": "Suggest one automatic transfer for the goal to plan a modest vacation."
+        },
+        {
+          "turn_id": "budget-coaching-05-turn-08",
+          "prompt": "What progress number should I track while I plan a modest vacation?"
+        },
+        {
+          "turn_id": "budget-coaching-05-turn-09",
+          "prompt": "Summarize the monthly plan to plan a modest vacation."
+        },
+        {
+          "turn_id": "budget-coaching-05-turn-10",
+          "prompt": "What is the biggest assumption in the plan to plan a modest vacation?"
+        }
+      ]
+    },
+    {
+      "case_id": "budget-coaching-06",
+      "family": "budget-coaching",
+      "variant": 6,
+      "tags": [
+        "context",
+        "numeric",
+        "planning"
+      ],
+      "turns": [
+        {
+          "turn_id": "budget-coaching-06-turn-01",
+          "prompt": "Help me replace a laptop over the next 9 months."
+        },
+        {
+          "turn_id": "budget-coaching-06-turn-02",
+          "prompt": "For my goal to replace a laptop, I can set aside 295 dollars monthly."
+        },
+        {
+          "turn_id": "budget-coaching-06-turn-03",
+          "prompt": "Name the first expense category to review so I can replace a laptop."
+        },
+        {
+          "turn_id": "budget-coaching-06-turn-04",
+          "prompt": "Give me a weekly spending limit that supports my plan to replace a laptop."
+        },
+        {
+          "turn_id": "budget-coaching-06-turn-05",
+          "prompt": "I forgot an annual insurance bill; revise the plan to replace a laptop."
+        },
+        {
+          "turn_id": "budget-coaching-06-turn-06",
+          "prompt": "Keep a small entertainment allowance while I replace a laptop."
+        },
+        {
+          "turn_id": "budget-coaching-06-turn-07",
+          "prompt": "Suggest one automatic transfer for the goal to replace a laptop."
+        },
+        {
+          "turn_id": "budget-coaching-06-turn-08",
+          "prompt": "What progress number should I track while I replace a laptop?"
+        },
+        {
+          "turn_id": "budget-coaching-06-turn-09",
+          "prompt": "Summarize the monthly plan to replace a laptop."
+        },
+        {
+          "turn_id": "budget-coaching-06-turn-10",
+          "prompt": "What is the biggest assumption in the plan to replace a laptop?"
+        }
+      ]
+    },
+    {
+      "case_id": "budget-coaching-07",
+      "family": "budget-coaching",
+      "variant": 7,
+      "tags": [
+        "context",
+        "numeric",
+        "planning"
+      ],
+      "turns": [
+        {
+          "turn_id": "budget-coaching-07-turn-01",
+          "prompt": "Help me prepare for moving costs over the next 10 months."
+        },
+        {
+          "turn_id": "budget-coaching-07-turn-02",
+          "prompt": "For my goal to prepare for moving costs, I can set aside 330 dollars monthly."
+        },
+        {
+          "turn_id": "budget-coaching-07-turn-03",
+          "prompt": "Name the first expense category to review so I can prepare for moving costs."
+        },
+        {
+          "turn_id": "budget-coaching-07-turn-04",
+          "prompt": "Give me a weekly spending limit that supports my plan to prepare for moving costs."
+        },
+        {
+          "turn_id": "budget-coaching-07-turn-05",
+          "prompt": "I forgot an annual insurance bill; revise the plan to prepare for moving costs."
+        },
+        {
+          "turn_id": "budget-coaching-07-turn-06",
+          "prompt": "Keep a small entertainment allowance while I prepare for moving costs."
+        },
+        {
+          "turn_id": "budget-coaching-07-turn-07",
+          "prompt": "Suggest one automatic transfer for the goal to prepare for moving costs."
+        },
+        {
+          "turn_id": "budget-coaching-07-turn-08",
+          "prompt": "What progress number should I track while I prepare for moving costs?"
+        },
+        {
+          "turn_id": "budget-coaching-07-turn-09",
+          "prompt": "Summarize the monthly plan to prepare for moving costs."
+        },
+        {
+          "turn_id": "budget-coaching-07-turn-10",
+          "prompt": "What is the biggest assumption in the plan to prepare for moving costs?"
+        }
+      ]
+    },
+    {
+      "case_id": "budget-coaching-08",
+      "family": "budget-coaching",
+      "variant": 8,
+      "tags": [
+        "context",
+        "numeric",
+        "planning"
+      ],
+      "turns": [
+        {
+          "turn_id": "budget-coaching-08-turn-01",
+          "prompt": "Help me start a course fund over the next 11 months."
+        },
+        {
+          "turn_id": "budget-coaching-08-turn-02",
+          "prompt": "For my goal to start a course fund, I can set aside 365 dollars monthly."
+        },
+        {
+          "turn_id": "budget-coaching-08-turn-03",
+          "prompt": "Name the first expense category to review so I can start a course fund."
+        },
+        {
+          "turn_id": "budget-coaching-08-turn-04",
+          "prompt": "Give me a weekly spending limit that supports my plan to start a course fund."
+        },
+        {
+          "turn_id": "budget-coaching-08-turn-05",
+          "prompt": "I forgot an annual insurance bill; revise the plan to start a course fund."
+        },
+        {
+          "turn_id": "budget-coaching-08-turn-06",
+          "prompt": "Keep a small entertainment allowance while I start a course fund."
+        },
+        {
+          "turn_id": "budget-coaching-08-turn-07",
+          "prompt": "Suggest one automatic transfer for the goal to start a course fund."
+        },
+        {
+          "turn_id": "budget-coaching-08-turn-08",
+          "prompt": "What progress number should I track while I start a course fund?"
+        },
+        {
+          "turn_id": "budget-coaching-08-turn-09",
+          "prompt": "Summarize the monthly plan to start a course fund."
+        },
+        {
+          "turn_id": "budget-coaching-08-turn-10",
+          "prompt": "What is the biggest assumption in the plan to start a course fund?"
+        }
+      ]
+    },
+    {
+      "case_id": "budget-coaching-09",
+      "family": "budget-coaching",
+      "variant": 9,
+      "tags": [
+        "context",
+        "numeric",
+        "planning"
+      ],
+      "turns": [
+        {
+          "turn_id": "budget-coaching-09-turn-01",
+          "prompt": "Help me lower monthly subscriptions over the next 12 months."
+        },
+        {
+          "turn_id": "budget-coaching-09-turn-02",
+          "prompt": "For my goal to lower monthly subscriptions, I can set aside 400 dollars monthly."
+        },
+        {
+          "turn_id": "budget-coaching-09-turn-03",
+          "prompt": "Name the first expense category to review so I can lower monthly subscriptions."
+        },
+        {
+          "turn_id": "budget-coaching-09-turn-04",
+          "prompt": "Give me a weekly spending limit that supports my plan to lower monthly subscriptions."
+        },
+        {
+          "turn_id": "budget-coaching-09-turn-05",
+          "prompt": "I forgot an annual insurance bill; revise the plan to lower monthly subscriptions."
+        },
+        {
+          "turn_id": "budget-coaching-09-turn-06",
+          "prompt": "Keep a small entertainment allowance while I lower monthly subscriptions."
+        },
+        {
+          "turn_id": "budget-coaching-09-turn-07",
+          "prompt": "Suggest one automatic transfer for the goal to lower monthly subscriptions."
+        },
+        {
+          "turn_id": "budget-coaching-09-turn-08",
+          "prompt": "What progress number should I track while I lower monthly subscriptions?"
+        },
+        {
+          "turn_id": "budget-coaching-09-turn-09",
+          "prompt": "Summarize the monthly plan to lower monthly subscriptions."
+        },
+        {
+          "turn_id": "budget-coaching-09-turn-10",
+          "prompt": "What is the biggest assumption in the plan to lower monthly subscriptions?"
+        }
+      ]
+    },
+    {
+      "case_id": "budget-coaching-10",
+      "family": "budget-coaching",
+      "variant": 10,
+      "tags": [
+        "context",
+        "numeric",
+        "planning"
+      ],
+      "turns": [
+        {
+          "turn_id": "budget-coaching-10-turn-01",
+          "prompt": "Help me save for home repairs over the next 13 months."
+        },
+        {
+          "turn_id": "budget-coaching-10-turn-02",
+          "prompt": "For my goal to save for home repairs, I can set aside 435 dollars monthly."
+        },
+        {
+          "turn_id": "budget-coaching-10-turn-03",
+          "prompt": "Name the first expense category to review so I can save for home repairs."
+        },
+        {
+          "turn_id": "budget-coaching-10-turn-04",
+          "prompt": "Give me a weekly spending limit that supports my plan to save for home repairs."
+        },
+        {
+          "turn_id": "budget-coaching-10-turn-05",
+          "prompt": "I forgot an annual insurance bill; revise the plan to save for home repairs."
+        },
+        {
+          "turn_id": "budget-coaching-10-turn-06",
+          "prompt": "Keep a small entertainment allowance while I save for home repairs."
+        },
+        {
+          "turn_id": "budget-coaching-10-turn-07",
+          "prompt": "Suggest one automatic transfer for the goal to save for home repairs."
+        },
+        {
+          "turn_id": "budget-coaching-10-turn-08",
+          "prompt": "What progress number should I track while I save for home repairs?"
+        },
+        {
+          "turn_id": "budget-coaching-10-turn-09",
+          "prompt": "Summarize the monthly plan to save for home repairs."
+        },
+        {
+          "turn_id": "budget-coaching-10-turn-10",
+          "prompt": "What is the biggest assumption in the plan to save for home repairs?"
+        }
+      ]
+    },
+    {
+      "case_id": "language-practice-01",
+      "family": "language-practice",
+      "variant": 1,
+      "tags": [
+        "context",
+        "language",
+        "role-play"
+      ],
+      "turns": [
+        {
+          "turn_id": "language-practice-01-turn-01",
+          "prompt": "Practice a beginner Spanish conversation about ordering breakfast with me."
+        },
+        {
+          "turn_id": "language-practice-01-turn-02",
+          "prompt": "In Spanish, greet me for the ordering breakfast role-play."
+        },
+        {
+          "turn_id": "language-practice-01-turn-03",
+          "prompt": "Translate my reply into natural Spanish for the ordering breakfast."
+        },
+        {
+          "turn_id": "language-practice-01-turn-04",
+          "prompt": "Correct one likely pronunciation issue in that Spanish sentence."
+        },
+        {
+          "turn_id": "language-practice-01-turn-05",
+          "prompt": "Ask me a follow-up question in Spanish about ordering breakfast."
+        },
+        {
+          "turn_id": "language-practice-01-turn-06",
+          "prompt": "Make the next Spanish question slightly more difficult."
+        },
+        {
+          "turn_id": "language-practice-01-turn-07",
+          "prompt": "Explain one polite phrase used in Spanish during ordering breakfast."
+        },
+        {
+          "turn_id": "language-practice-01-turn-08",
+          "prompt": "Now continue the ordering breakfast role-play only in Spanish."
+        },
+        {
+          "turn_id": "language-practice-01-turn-09",
+          "prompt": "Summarize my two biggest Spanish mistakes from ordering breakfast."
+        },
+        {
+          "turn_id": "language-practice-01-turn-10",
+          "prompt": "End the ordering breakfast practice with a short Spanish farewell."
+        }
+      ]
+    },
+    {
+      "case_id": "language-practice-02",
+      "family": "language-practice",
+      "variant": 2,
+      "tags": [
+        "context",
+        "language",
+        "role-play"
+      ],
+      "turns": [
+        {
+          "turn_id": "language-practice-02-turn-01",
+          "prompt": "Practice a beginner French conversation about checking into a hotel with me."
+        },
+        {
+          "turn_id": "language-practice-02-turn-02",
+          "prompt": "In French, greet me for the checking into a hotel role-play."
+        },
+        {
+          "turn_id": "language-practice-02-turn-03",
+          "prompt": "Translate my reply into natural French for the checking into a hotel."
+        },
+        {
+          "turn_id": "language-practice-02-turn-04",
+          "prompt": "Correct one likely pronunciation issue in that French sentence."
+        },
+        {
+          "turn_id": "language-practice-02-turn-05",
+          "prompt": "Ask me a follow-up question in French about checking into a hotel."
+        },
+        {
+          "turn_id": "language-practice-02-turn-06",
+          "prompt": "Make the next French question slightly more difficult."
+        },
+        {
+          "turn_id": "language-practice-02-turn-07",
+          "prompt": "Explain one polite phrase used in French during checking into a hotel."
+        },
+        {
+          "turn_id": "language-practice-02-turn-08",
+          "prompt": "Now continue the checking into a hotel role-play only in French."
+        },
+        {
+          "turn_id": "language-practice-02-turn-09",
+          "prompt": "Summarize my two biggest French mistakes from checking into a hotel."
+        },
+        {
+          "turn_id": "language-practice-02-turn-10",
+          "prompt": "End the checking into a hotel practice with a short French farewell."
+        }
+      ]
+    },
+    {
+      "case_id": "language-practice-03",
+      "family": "language-practice",
+      "variant": 3,
+      "tags": [
+        "context",
+        "language",
+        "role-play"
+      ],
+      "turns": [
+        {
+          "turn_id": "language-practice-03-turn-01",
+          "prompt": "Practice a beginner Japanese conversation about asking for directions with me."
+        },
+        {
+          "turn_id": "language-practice-03-turn-02",
+          "prompt": "In Japanese, greet me for the asking for directions role-play."
+        },
+        {
+          "turn_id": "language-practice-03-turn-03",
+          "prompt": "Translate my reply into natural Japanese for the asking for directions."
+        },
+        {
+          "turn_id": "language-practice-03-turn-04",
+          "prompt": "Correct one likely pronunciation issue in that Japanese sentence."
+        },
+        {
+          "turn_id": "language-practice-03-turn-05",
+          "prompt": "Ask me a follow-up question in Japanese about asking for directions."
+        },
+        {
+          "turn_id": "language-practice-03-turn-06",
+          "prompt": "Make the next Japanese question slightly more difficult."
+        },
+        {
+          "turn_id": "language-practice-03-turn-07",
+          "prompt": "Explain one polite phrase used in Japanese during asking for directions."
+        },
+        {
+          "turn_id": "language-practice-03-turn-08",
+          "prompt": "Now continue the asking for directions role-play only in Japanese."
+        },
+        {
+          "turn_id": "language-practice-03-turn-09",
+          "prompt": "Summarize my two biggest Japanese mistakes from asking for directions."
+        },
+        {
+          "turn_id": "language-practice-03-turn-10",
+          "prompt": "End the asking for directions practice with a short Japanese farewell."
+        }
+      ]
+    },
+    {
+      "case_id": "language-practice-04",
+      "family": "language-practice",
+      "variant": 4,
+      "tags": [
+        "context",
+        "language",
+        "role-play"
+      ],
+      "turns": [
+        {
+          "turn_id": "language-practice-04-turn-01",
+          "prompt": "Practice a beginner German conversation about buying a train ticket with me."
+        },
+        {
+          "turn_id": "language-practice-04-turn-02",
+          "prompt": "In German, greet me for the buying a train ticket role-play."
+        },
+        {
+          "turn_id": "language-practice-04-turn-03",
+          "prompt": "Translate my reply into natural German for the buying a train ticket."
+        },
+        {
+          "turn_id": "language-practice-04-turn-04",
+          "prompt": "Correct one likely pronunciation issue in that German sentence."
+        },
+        {
+          "turn_id": "language-practice-04-turn-05",
+          "prompt": "Ask me a follow-up question in German about buying a train ticket."
+        },
+        {
+          "turn_id": "language-practice-04-turn-06",
+          "prompt": "Make the next German question slightly more difficult."
+        },
+        {
+          "turn_id": "language-practice-04-turn-07",
+          "prompt": "Explain one polite phrase used in German during buying a train ticket."
+        },
+        {
+          "turn_id": "language-practice-04-turn-08",
+          "prompt": "Now continue the buying a train ticket role-play only in German."
+        },
+        {
+          "turn_id": "language-practice-04-turn-09",
+          "prompt": "Summarize my two biggest German mistakes from buying a train ticket."
+        },
+        {
+          "turn_id": "language-practice-04-turn-10",
+          "prompt": "End the buying a train ticket practice with a short German farewell."
+        }
+      ]
+    },
+    {
+      "case_id": "language-practice-05",
+      "family": "language-practice",
+      "variant": 5,
+      "tags": [
+        "context",
+        "language",
+        "role-play"
+      ],
+      "turns": [
+        {
+          "turn_id": "language-practice-05-turn-01",
+          "prompt": "Practice a beginner Italian conversation about meeting a colleague with me."
+        },
+        {
+          "turn_id": "language-practice-05-turn-02",
+          "prompt": "In Italian, greet me for the meeting a colleague role-play."
+        },
+        {
+          "turn_id": "language-practice-05-turn-03",
+          "prompt": "Translate my reply into natural Italian for the meeting a colleague."
+        },
+        {
+          "turn_id": "language-practice-05-turn-04",
+          "prompt": "Correct one likely pronunciation issue in that Italian sentence."
+        },
+        {
+          "turn_id": "language-practice-05-turn-05",
+          "prompt": "Ask me a follow-up question in Italian about meeting a colleague."
+        },
+        {
+          "turn_id": "language-practice-05-turn-06",
+          "prompt": "Make the next Italian question slightly more difficult."
+        },
+        {
+          "turn_id": "language-practice-05-turn-07",
+          "prompt": "Explain one polite phrase used in Italian during meeting a colleague."
+        },
+        {
+          "turn_id": "language-practice-05-turn-08",
+          "prompt": "Now continue the meeting a colleague role-play only in Italian."
+        },
+        {
+          "turn_id": "language-practice-05-turn-09",
+          "prompt": "Summarize my two biggest Italian mistakes from meeting a colleague."
+        },
+        {
+          "turn_id": "language-practice-05-turn-10",
+          "prompt": "End the meeting a colleague practice with a short Italian farewell."
+        }
+      ]
+    },
+    {
+      "case_id": "language-practice-06",
+      "family": "language-practice",
+      "variant": 6,
+      "tags": [
+        "context",
+        "language",
+        "role-play"
+      ],
+      "turns": [
+        {
+          "turn_id": "language-practice-06-turn-01",
+          "prompt": "Practice a beginner Korean conversation about ordering breakfast with me."
+        },
+        {
+          "turn_id": "language-practice-06-turn-02",
+          "prompt": "In Korean, greet me for the ordering breakfast role-play."
+        },
+        {
+          "turn_id": "language-practice-06-turn-03",
+          "prompt": "Translate my reply into natural Korean for the ordering breakfast."
+        },
+        {
+          "turn_id": "language-practice-06-turn-04",
+          "prompt": "Correct one likely pronunciation issue in that Korean sentence."
+        },
+        {
+          "turn_id": "language-practice-06-turn-05",
+          "prompt": "Ask me a follow-up question in Korean about ordering breakfast."
+        },
+        {
+          "turn_id": "language-practice-06-turn-06",
+          "prompt": "Make the next Korean question slightly more difficult."
+        },
+        {
+          "turn_id": "language-practice-06-turn-07",
+          "prompt": "Explain one polite phrase used in Korean during ordering breakfast."
+        },
+        {
+          "turn_id": "language-practice-06-turn-08",
+          "prompt": "Now continue the ordering breakfast role-play only in Korean."
+        },
+        {
+          "turn_id": "language-practice-06-turn-09",
+          "prompt": "Summarize my two biggest Korean mistakes from ordering breakfast."
+        },
+        {
+          "turn_id": "language-practice-06-turn-10",
+          "prompt": "End the ordering breakfast practice with a short Korean farewell."
+        }
+      ]
+    },
+    {
+      "case_id": "language-practice-07",
+      "family": "language-practice",
+      "variant": 7,
+      "tags": [
+        "context",
+        "language",
+        "role-play"
+      ],
+      "turns": [
+        {
+          "turn_id": "language-practice-07-turn-01",
+          "prompt": "Practice a beginner Portuguese conversation about checking into a hotel with me."
+        },
+        {
+          "turn_id": "language-practice-07-turn-02",
+          "prompt": "In Portuguese, greet me for the checking into a hotel role-play."
+        },
+        {
+          "turn_id": "language-practice-07-turn-03",
+          "prompt": "Translate my reply into natural Portuguese for the checking into a hotel."
+        },
+        {
+          "turn_id": "language-practice-07-turn-04",
+          "prompt": "Correct one likely pronunciation issue in that Portuguese sentence."
+        },
+        {
+          "turn_id": "language-practice-07-turn-05",
+          "prompt": "Ask me a follow-up question in Portuguese about checking into a hotel."
+        },
+        {
+          "turn_id": "language-practice-07-turn-06",
+          "prompt": "Make the next Portuguese question slightly more difficult."
+        },
+        {
+          "turn_id": "language-practice-07-turn-07",
+          "prompt": "Explain one polite phrase used in Portuguese during checking into a hotel."
+        },
+        {
+          "turn_id": "language-practice-07-turn-08",
+          "prompt": "Now continue the checking into a hotel role-play only in Portuguese."
+        },
+        {
+          "turn_id": "language-practice-07-turn-09",
+          "prompt": "Summarize my two biggest Portuguese mistakes from checking into a hotel."
+        },
+        {
+          "turn_id": "language-practice-07-turn-10",
+          "prompt": "End the checking into a hotel practice with a short Portuguese farewell."
+        }
+      ]
+    },
+    {
+      "case_id": "language-practice-08",
+      "family": "language-practice",
+      "variant": 8,
+      "tags": [
+        "context",
+        "language",
+        "role-play"
+      ],
+      "turns": [
+        {
+          "turn_id": "language-practice-08-turn-01",
+          "prompt": "Practice a beginner Mandarin conversation about asking for directions with me."
+        },
+        {
+          "turn_id": "language-practice-08-turn-02",
+          "prompt": "In Mandarin, greet me for the asking for directions role-play."
+        },
+        {
+          "turn_id": "language-practice-08-turn-03",
+          "prompt": "Translate my reply into natural Mandarin for the asking for directions."
+        },
+        {
+          "turn_id": "language-practice-08-turn-04",
+          "prompt": "Correct one likely pronunciation issue in that Mandarin sentence."
+        },
+        {
+          "turn_id": "language-practice-08-turn-05",
+          "prompt": "Ask me a follow-up question in Mandarin about asking for directions."
+        },
+        {
+          "turn_id": "language-practice-08-turn-06",
+          "prompt": "Make the next Mandarin question slightly more difficult."
+        },
+        {
+          "turn_id": "language-practice-08-turn-07",
+          "prompt": "Explain one polite phrase used in Mandarin during asking for directions."
+        },
+        {
+          "turn_id": "language-practice-08-turn-08",
+          "prompt": "Now continue the asking for directions role-play only in Mandarin."
+        },
+        {
+          "turn_id": "language-practice-08-turn-09",
+          "prompt": "Summarize my two biggest Mandarin mistakes from asking for directions."
+        },
+        {
+          "turn_id": "language-practice-08-turn-10",
+          "prompt": "End the asking for directions practice with a short Mandarin farewell."
+        }
+      ]
+    },
+    {
+      "case_id": "language-practice-09",
+      "family": "language-practice",
+      "variant": 9,
+      "tags": [
+        "context",
+        "language",
+        "role-play"
+      ],
+      "turns": [
+        {
+          "turn_id": "language-practice-09-turn-01",
+          "prompt": "Practice a beginner Dutch conversation about buying a train ticket with me."
+        },
+        {
+          "turn_id": "language-practice-09-turn-02",
+          "prompt": "In Dutch, greet me for the buying a train ticket role-play."
+        },
+        {
+          "turn_id": "language-practice-09-turn-03",
+          "prompt": "Translate my reply into natural Dutch for the buying a train ticket."
+        },
+        {
+          "turn_id": "language-practice-09-turn-04",
+          "prompt": "Correct one likely pronunciation issue in that Dutch sentence."
+        },
+        {
+          "turn_id": "language-practice-09-turn-05",
+          "prompt": "Ask me a follow-up question in Dutch about buying a train ticket."
+        },
+        {
+          "turn_id": "language-practice-09-turn-06",
+          "prompt": "Make the next Dutch question slightly more difficult."
+        },
+        {
+          "turn_id": "language-practice-09-turn-07",
+          "prompt": "Explain one polite phrase used in Dutch during buying a train ticket."
+        },
+        {
+          "turn_id": "language-practice-09-turn-08",
+          "prompt": "Now continue the buying a train ticket role-play only in Dutch."
+        },
+        {
+          "turn_id": "language-practice-09-turn-09",
+          "prompt": "Summarize my two biggest Dutch mistakes from buying a train ticket."
+        },
+        {
+          "turn_id": "language-practice-09-turn-10",
+          "prompt": "End the buying a train ticket practice with a short Dutch farewell."
+        }
+      ]
+    },
+    {
+      "case_id": "language-practice-10",
+      "family": "language-practice",
+      "variant": 10,
+      "tags": [
+        "context",
+        "language",
+        "role-play"
+      ],
+      "turns": [
+        {
+          "turn_id": "language-practice-10-turn-01",
+          "prompt": "Practice a beginner Swedish conversation about meeting a colleague with me."
+        },
+        {
+          "turn_id": "language-practice-10-turn-02",
+          "prompt": "In Swedish, greet me for the meeting a colleague role-play."
+        },
+        {
+          "turn_id": "language-practice-10-turn-03",
+          "prompt": "Translate my reply into natural Swedish for the meeting a colleague."
+        },
+        {
+          "turn_id": "language-practice-10-turn-04",
+          "prompt": "Correct one likely pronunciation issue in that Swedish sentence."
+        },
+        {
+          "turn_id": "language-practice-10-turn-05",
+          "prompt": "Ask me a follow-up question in Swedish about meeting a colleague."
+        },
+        {
+          "turn_id": "language-practice-10-turn-06",
+          "prompt": "Make the next Swedish question slightly more difficult."
+        },
+        {
+          "turn_id": "language-practice-10-turn-07",
+          "prompt": "Explain one polite phrase used in Swedish during meeting a colleague."
+        },
+        {
+          "turn_id": "language-practice-10-turn-08",
+          "prompt": "Now continue the meeting a colleague role-play only in Swedish."
+        },
+        {
+          "turn_id": "language-practice-10-turn-09",
+          "prompt": "Summarize my two biggest Swedish mistakes from meeting a colleague."
+        },
+        {
+          "turn_id": "language-practice-10-turn-10",
+          "prompt": "End the meeting a colleague practice with a short Swedish farewell."
+        }
+      ]
+    }
+  ]
+}

@@ -833,6 +833,24 @@ def _make_unit(index: int) -> PipelineUnit:
 
 
 class TestPool:
+    def test_lifespan_maintains_idle_provider_connections(self):
+        maintained = ThreadingEvent()
+
+        class Handler:
+            def maintain_connection(self):
+                maintained.set()
+
+        unit = _make_unit(0)
+        unit.handlers = [Handler()]
+        app = create_app(
+            pool=[unit],
+            stop_event=ThreadingEvent(),
+            connection_maintenance_interval_s=0.01,
+        )
+
+        with TestClient(app):
+            assert maintained.wait(timeout=1)
+
     def test_root_and_inspector_probe_are_not_404(self):
         app = create_app(pool=[_make_unit(0)], stop_event=ThreadingEvent())
         with TestClient(app) as client:

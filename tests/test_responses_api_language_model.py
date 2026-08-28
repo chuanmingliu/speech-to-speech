@@ -23,6 +23,7 @@ from speech_to_speech.api.openai_realtime.runtime_config import RuntimeConfig
 from speech_to_speech.LLM.base_openai_compatible_language_model import WARMUP_MAX_RETRIES
 from speech_to_speech.LLM.chat import Chat, make_user_message
 from speech_to_speech.LLM.responses_api_language_model import ResponsesApiModelHandler
+from speech_to_speech.LLM.voice_prompt import build_voice_system_prompt
 from speech_to_speech.pipeline.cancel_scope import CancelScope
 from speech_to_speech.pipeline.messages import EndOfResponse, GenerateResponseRequest, LLMResponseChunk, TokenUsage
 
@@ -101,6 +102,7 @@ def _make_handler(*, disable_thinking=False, stream=True, cancel_scope=None):
     handler.gen_kwargs = {}
     handler.request_timeout_s = 20.0
     handler.request_timeout = 20.0
+    handler.prewarm_wait_s = 0.0
     handler.disable_thinking = disable_thinking
     handler._extra_body = {"chat_template_kwargs": {"enable_thinking": False}} if disable_thinking else None
     handler.user_role = "user"
@@ -110,6 +112,7 @@ def _make_handler(*, disable_thinking=False, stream=True, cancel_scope=None):
     handler.tools_choice = None
     handler.enable_lang_prompt = False
     handler.compactor = None
+    handler.warmup_system_prompt = build_voice_system_prompt("Keep answers short.")
     return handler
 
 
@@ -121,7 +124,28 @@ def test_warmup_uses_request_scoped_sdk_retries():
     handler.warmup()
 
     handler.client.with_options.assert_called_once_with(max_retries=WARMUP_MAX_RETRIES)
-    handler.client.responses.create.assert_called_once()
+    handler.client.responses.create.assert_called_once_with(
+        model="test-model",
+        input=[
+            {
+                "type": "message",
+                "role": "system",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": build_voice_system_prompt("Keep answers short."),
+                    }
+                ],
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": ""}],
+            },
+        ],
+        max_output_tokens=1,
+        timeout=20.0,
+    )
 
 
 def test_warmup_failure_propagates_and_prevents_readiness():

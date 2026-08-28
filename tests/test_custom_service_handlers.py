@@ -64,64 +64,47 @@ class FakeHTTPResponse:
         return self.body
 
 
-class FakeStreamResponse:
-    def __init__(self, events=None, *, chunks=None, iter_text_fn=None, error=None):
-        self.events = events or []
-        self.chunks = chunks
-        self.iter_text_fn = iter_text_fn
-        self.error = error
-        self.raise_for_status_calls = 0
+class FakeHTTPClient:
+    def __init__(self, response=None):
+        self.response = response
+        self.calls = []
         self.closed = False
 
-    def raise_for_status(self):
-        self.raise_for_status_calls += 1
-        if self.error:
-            raise self.error
-
-    def iter_text(self):
-        if self.iter_text_fn is not None:
-            yield from self.iter_text_fn()
-            return
-        if self.chunks is not None:
-            yield from self.chunks
-            return
-        for event in self.events:
-            if isinstance(event, str):
-                yield event
-            else:
-                yield f"data: {json.dumps(event)}\n\n"
+    def post(self, url, *, headers, json, **_kwargs):
+        self.calls.append((url, headers, json))
+        return self.response
 
     def close(self):
         self.closed = True
 
-    def __enter__(self):
-        return self
 
-    def __exit__(self, exc_type, exc, tb):
-        self.close()
-        return False
-
-
-class FakeHTTPClient:
-    def __init__(self, response=None, on_post=None, on_stream=None, stream_response=None):
-        self.response = response
-        self.stream_response = stream_response
-        self.on_post = on_post
-        self.on_stream = on_stream
-        self.calls = []
+class FakeWebSocket:
+    def __init__(self, messages=None, *, on_continue=None):
+        self.messages = list(messages or [])
+        self.on_continue = on_continue
+        self.sent = []
+        self.connect_calls = []
         self.closed = False
 
-    def post(self, url, *, headers, json):
-        self.calls.append((url, headers, json))
-        if self.on_post:
-            self.on_post()
-        return self.response
+    def connect(self, endpoint, *, headers, open_timeout_s):
+        self.connect_calls.append((endpoint, headers, open_timeout_s))
+        return self
 
-    def stream(self, method, url, *, headers, json):
-        self.calls.append((url, headers, json))
-        if self.on_stream:
-            self.on_stream()
-        return self.stream_response if self.stream_response is not None else self.response
+    def send(self, raw):
+        message = json.loads(raw)
+        self.sent.append(message)
+        if message.get("event") == "task_continue" and self.on_continue:
+            self.on_continue()
+
+    def recv(self, timeout=None):
+        if not self.messages:
+            raise TimeoutError
+        message = self.messages.pop(0)
+        if callable(message):
+            message = message()
+        if isinstance(message, BaseException):
+            raise message
+        return message if isinstance(message, (str, bytes)) else json.dumps(message)
 
     def close(self):
         self.closed = True
@@ -141,11 +124,29 @@ def _pcm_hex(samples):
     return np.asarray(samples, dtype="<i2").tobytes().hex()
 
 
-def _sse_event(samples, status=1, status_code=0, status_msg="success"):
+def _ws_event(samples=None, *, audio_hex=None, is_final=True, status_code=0, status_msg="success"):
+    if audio_hex is None and samples is not None:
+        audio_hex = _pcm_hex(samples)
     return {
-        "data": {"audio": _pcm_hex(samples), "status": status},
+        "event": "task_continued",
+        "data": {"audio": audio_hex} if audio_hex is not None else None,
+        "is_final": is_final,
         "base_resp": {"status_code": status_code, "status_msg": status_msg},
     }
+
+
+def _ws_messages(*continued_events):
+    return [
+        {
+            "event": "connected_success",
+            "base_resp": {"status_code": 0, "status_msg": "success"},
+        },
+        {
+            "event": "task_started",
+            "base_resp": {"status_code": 0, "status_msg": "success"},
+        },
+        *continued_events,
+    ]
 
 
 def _minimax_response(samples):
@@ -170,7 +171,18 @@ def _tencent_handler(client):
     )
 
 
-def _minimax_handler(client, cancel_scope=None, stream=True):
+def _minimax_handler(
+    client,
+    cancel_scope=None,
+    stream=True,
+    *,
+    websocket=None,
+    warmup_connection=None,
+    warmup_model=None,
+    model_warmup_text=None,
+    cache_max_mb=None,
+):
+    websocket = websocket or FakeWebSocket()
     return MiniMaxTTSHandler(
         Event(),
         queue_in=Queue(),
@@ -178,10 +190,19 @@ def _minimax_handler(client, cancel_scope=None, stream=True):
         setup_args=(Event(),),
         setup_kwargs={
             "api_key": "test-key",
+            "model": "speech-2.8-turbo",
             "voice_id": "test-voice",
+            "endpoint": "https://api.minimax.io/v1/t2a_v2",
+            "websocket_endpoint": "wss://api.minimax.io/ws/v1/t2a_v2",
+            "language_boost": "auto",
             "client": client,
+            "websocket_connect": websocket.connect,
             "cancel_scope": cancel_scope,
             "stream": stream,
+            "warmup_connection": warmup_connection,
+            "warmup_model": warmup_model,
+            "model_warmup_text": model_warmup_text,
+            "cache_max_mb": cache_max_mb,
         },
     )
 
@@ -292,6 +313,7 @@ def test_tencent_asr_reruns_when_final_audio_is_much_longer(monkeypatch):
 class FakeRealtimeSession:
     def __init__(self, finish_text="你好世界。"):
         self.pcm_chunks = []
+        self.drain_timeouts = []
         self.started = False
         self.finished = False
         self.closed = False
@@ -302,8 +324,9 @@ class FakeRealtimeSession:
     def start(self):
         self.started = True
 
-    def send_pcm(self, pcm):
+    def send_pcm(self, pcm, *, drain_timeout_s=0.05):
         self.pcm_chunks.append(bytes(pcm))
+        self.drain_timeouts.append(drain_timeout_s)
         return self.partial
 
     def current_text(self):
@@ -366,6 +389,7 @@ def test_tencent_realtime_streams_progressive_then_finalizes(monkeypatch):
     monkeypatch.setattr("speech_to_speech.STT.tencent_asr_handler.console.print", lambda *args, **kwargs: None)
     first = np.zeros(3200, dtype=np.float32)
     second = np.zeros(6400, dtype=np.float32)
+    final_audio = np.zeros(7200, dtype=np.float32)
 
     partials = list(
         handler.process(
@@ -379,7 +403,7 @@ def test_tencent_realtime_streams_progressive_then_finalizes(monkeypatch):
     )
     final = list(
         handler.process(
-            VADAudio(audio=second, mode="final", turn_id="turn-1", turn_revision=1)
+            VADAudio(audio=final_audio, mode="final", turn_id="turn-1", turn_revision=1)
         )
     )
 
@@ -390,7 +414,43 @@ def test_tencent_realtime_streams_progressive_then_finalizes(monkeypatch):
     assert isinstance(final[0], Transcription)
     assert final[0].text == "你好世界。"
     sent = b"".join(session.pcm_chunks)
-    assert len(sent) == 6400 * 2
+    assert len(sent) == len(final_audio) * 2
+    assert session.drain_timeouts[-1] == 0.0
+    handler.cleanup()
+
+
+def test_tencent_realtime_failure_falls_back_without_retrying_same_turn(monkeypatch):
+    class FailingRealtimeSession:
+        def __init__(self):
+            self.start_calls = 0
+
+        def start(self):
+            self.start_calls += 1
+            raise TimeoutError("connect timed out")
+
+    session = FailingRealtimeSession()
+    handler = _realtime_handler(session)
+    monkeypatch.setattr("speech_to_speech.STT.tencent_asr_handler.console.print", lambda *args, **kwargs: None)
+    progressive = VADAudio(
+        audio=np.zeros(16000, dtype=np.float32),
+        mode="progressive",
+        turn_id="turn-1",
+        turn_revision=0,
+    )
+    final = VADAudio(
+        audio=np.zeros(16000, dtype=np.float32),
+        mode="final",
+        turn_id="turn-1",
+        turn_revision=0,
+    )
+
+    assert list(handler.process(progressive)) == []
+    assert handler._speculative is not None
+    handler._speculative["future"].result(timeout=1)
+    result = list(handler.process(final))
+
+    assert session.start_calls == 1
+    assert result[0].text == "识别成功。"
     handler.cleanup()
 
 
@@ -529,9 +589,9 @@ def test_tencent_asr_rejects_audio_over_sentence_limit():
 
 def test_minimax_tts_streams_pcm_and_yields_padded_chunks(monkeypatch):
     samples = np.arange(700, dtype=np.int16)
-    stream_response = FakeStreamResponse([_sse_event(samples)])
-    client = FakeHTTPClient(stream_response=stream_response)
-    handler = _minimax_handler(client)
+    websocket = FakeWebSocket(_ws_messages(_ws_event(samples)))
+    client = FakeHTTPClient()
+    handler = _minimax_handler(client, websocket=websocket)
     monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *args, **kwargs: None)
 
     result = list(handler.process(TTSInput(text="你好", language_code="zh")))
@@ -542,21 +602,113 @@ def test_minimax_tts_streams_pcm_and_yields_padded_chunks(monkeypatch):
     np.testing.assert_array_equal(result[1][:188], samples[512:])
     np.testing.assert_array_equal(result[1][188:], np.zeros(324, dtype=np.int16))
 
-    url, headers, payload = client.calls[0]
-    assert url == "https://api.minimax.io/v1/t2a_v2"
+    assert client.calls == []
+    url, headers, open_timeout_s = websocket.connect_calls[0]
+    assert url == "wss://api.minimax.io/ws/v1/t2a_v2"
     assert headers["Authorization"] == "Bearer test-key"
-    assert headers["Accept"] == "text/event-stream"
-    assert payload["model"] == "speech-2.8-turbo"
-    assert payload["text"] == "你好"
-    assert payload["stream"] is True
-    assert payload["output_format"] == "hex"
-    assert payload["voice_setting"]["voice_id"] == "test-voice"
-    assert payload["audio_setting"] == {
+    assert open_timeout_s == 5.0
+    task_start, task_continue = websocket.sent
+    assert task_start["event"] == "task_start"
+    assert task_start["model"] == "speech-2.8-turbo"
+    assert task_start["voice_setting"]["voice_id"] == "test-voice"
+    assert task_start["audio_setting"] == {
         "sample_rate": 16000,
         "format": "pcm",
         "channel": 1,
     }
-    assert stream_response.raise_for_status_calls == 1
+    assert task_start["continuous_sound"] is False
+    assert task_continue == {"event": "task_continue", "text": "你好"}
+
+
+def test_minimax_tts_warms_persistent_websocket_task():
+    websocket = FakeWebSocket(
+        _ws_messages()
+        + _ws_messages()
+    )
+    handler = _minimax_handler(
+        FakeHTTPClient(),
+        websocket=websocket,
+        warmup_connection=True,
+        warmup_model=False,
+    )
+
+    assert len(websocket.connect_calls) == 1
+    assert len(websocket.sent) == 1
+    assert websocket.sent[0]["event"] == "task_start"
+
+    handler._last_connection_use_s = 0
+    handler.maintain_connection()
+    assert len(websocket.connect_calls) == 2
+    assert [message["event"] for message in websocket.sent] == ["task_start", "task_start"]
+
+
+def test_minimax_tts_nonstream_warms_connection_with_voice_endpoint():
+    response = FakeHTTPResponse({"base_resp": {"status_code": 0, "status_msg": "success"}})
+    client = FakeHTTPClient(response=response)
+
+    handler = _minimax_handler(
+        client,
+        stream=False,
+        warmup_connection=True,
+        warmup_model=False,
+    )
+    handler.prewarm()
+
+    assert len(client.calls) == 1
+    url, headers, payload = client.calls[0]
+    assert url == "https://api.minimax.io/v1/get_voice"
+    assert headers["Accept"] == "application/json"
+    assert payload == {"voice_type": "system"}
+    assert response.raise_for_status_calls == 1
+
+    handler._last_connection_use_s = 0
+    handler.prewarm()
+    assert len(client.calls) == 2
+
+
+def test_minimax_tts_warmup_primes_model_and_exact_audio_cache(monkeypatch):
+    samples = np.arange(32, dtype=np.int16)
+    websocket = FakeWebSocket(
+        _ws_messages(_ws_event(samples))
+    )
+
+    handler = _minimax_handler(
+        FakeHTTPClient(),
+        websocket=websocket,
+        warmup_connection=False,
+        warmup_model=True,
+        model_warmup_text="Ready.",
+        cache_max_mb=1,
+    )
+    monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *args, **kwargs: None)
+
+    assert len(websocket.connect_calls) == 1
+    assert websocket.sent[1] == {"event": "task_continue", "text": "Ready."}
+    assert handler._last_model_use_s > 0
+
+    cached = list(handler.process(TTSInput(text="Ready.", language_code="en")))
+
+    assert b"".join(cached) == samples.tobytes()
+    assert [message["event"] for message in websocket.sent] == ["task_start", "task_continue"]
+
+
+def test_minimax_tts_reuses_exact_audio_from_memory_cache(monkeypatch):
+    samples = np.arange(700, dtype=np.int16)
+    websocket = FakeWebSocket(_ws_messages(_ws_event(samples)))
+    handler = _minimax_handler(
+        FakeHTTPClient(),
+        websocket=websocket,
+        cache_max_mb=1,
+    )
+    monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *args, **kwargs: None)
+    tts_input = TTSInput(text="你好", language_code="zh")
+
+    first = list(handler.process(tts_input))
+    second = list(handler.process(tts_input))
+
+    assert len(websocket.connect_calls) == 1
+    assert [message["event"] for message in websocket.sent] == ["task_start", "task_continue"]
+    assert b"".join(chunk.tobytes() for chunk in first) == b"".join(second)
 
 
 def test_minimax_tts_yields_short_first_frame_immediately(monkeypatch):
@@ -564,12 +716,17 @@ def test_minimax_tts_yields_short_first_frame_immediately(monkeypatch):
     second = np.arange(120, 632, dtype=np.int16)
     released = Event()
 
-    def iter_text():
-        yield f"data: {json.dumps(_sse_event(first))}\n\n"
+    def delayed_second():
         released.wait(timeout=1)
-        yield f"data: {json.dumps(_sse_event(second))}\n\n"
+        return _ws_event(second)
 
-    handler = _minimax_handler(FakeHTTPClient(stream_response=FakeStreamResponse(iter_text_fn=iter_text)))
+    websocket = FakeWebSocket(
+        _ws_messages(
+            _ws_event(first, is_final=False),
+            delayed_second,
+        )
+    )
+    handler = _minimax_handler(FakeHTTPClient(), websocket=websocket)
     monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *args, **kwargs: None)
 
     gen = handler.process(TTSInput(text="hello"))
@@ -586,13 +743,17 @@ def test_minimax_tts_yields_first_chunk_before_stream_ends(monkeypatch):
     second = np.arange(512, 1024, dtype=np.int16)
     released = Event()
 
-    def iter_text():
-        yield f"data: {json.dumps(_sse_event(first))}\n\n"
+    def delayed_second():
         released.wait(timeout=1)
-        yield f"data: {json.dumps(_sse_event(second))}\n\n"
+        return _ws_event(second)
 
-    stream_response = FakeStreamResponse(iter_text_fn=iter_text)
-    handler = _minimax_handler(FakeHTTPClient(stream_response=stream_response))
+    websocket = FakeWebSocket(
+        _ws_messages(
+            _ws_event(first, is_final=False),
+            delayed_second,
+        )
+    )
+    handler = _minimax_handler(FakeHTTPClient(), websocket=websocket)
     monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *args, **kwargs: None)
 
     gen = handler.process(TTSInput(text="hello"))
@@ -604,22 +765,23 @@ def test_minimax_tts_yields_first_chunk_before_stream_ends(monkeypatch):
     np.testing.assert_array_equal(rest[0], second)
 
 
-def test_minimax_tts_skips_aggregated_status_two_audio(monkeypatch):
-    incremental = np.arange(512, dtype=np.int16)
-    aggregated = np.arange(1024, dtype=np.int16)
-    stream_response = FakeStreamResponse(
-        [
-            _sse_event(incremental, status=1),
-            _sse_event(aggregated, status=2),
-        ]
+def test_minimax_tts_plays_audio_from_final_websocket_event(monkeypatch):
+    first = np.arange(512, dtype=np.int16)
+    final = np.arange(512, 1024, dtype=np.int16)
+    websocket = FakeWebSocket(
+        _ws_messages(
+            _ws_event(first, is_final=False),
+            _ws_event(final),
+        )
     )
-    handler = _minimax_handler(FakeHTTPClient(stream_response=stream_response))
+    handler = _minimax_handler(FakeHTTPClient(), websocket=websocket)
     monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *args, **kwargs: None)
 
     result = list(handler.process(TTSInput(text="hello")))
 
-    assert len(result) == 1
-    np.testing.assert_array_equal(result[0], incremental)
+    assert len(result) == 2
+    np.testing.assert_array_equal(result[0], first)
+    np.testing.assert_array_equal(result[1], final)
 
 
 def test_minimax_tts_reassembles_split_hex_frames(monkeypatch):
@@ -628,17 +790,13 @@ def test_minimax_tts_reassembles_split_hex_frames(monkeypatch):
     midpoint = (len(hex_audio) // 2) | 1  # odd split so a nibble is carried
     first_hex = hex_audio[:midpoint]
     second_hex = hex_audio[midpoint:]
-    events = [
-        {
-            "data": {"audio": first_hex, "status": 1},
-            "base_resp": {"status_code": 0, "status_msg": "success"},
-        },
-        {
-            "data": {"audio": second_hex, "status": 1},
-            "base_resp": {"status_code": 0, "status_msg": "success"},
-        },
-    ]
-    handler = _minimax_handler(FakeHTTPClient(stream_response=FakeStreamResponse(events)))
+    websocket = FakeWebSocket(
+        _ws_messages(
+            _ws_event(audio_hex=first_hex, is_final=False),
+            _ws_event(audio_hex=second_hex),
+        )
+    )
+    handler = _minimax_handler(FakeHTTPClient(), websocket=websocket)
     monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *args, **kwargs: None)
 
     result = list(handler.process(TTSInput(text="hello")))
@@ -648,21 +806,23 @@ def test_minimax_tts_reassembles_split_hex_frames(monkeypatch):
 
 
 def test_minimax_tts_emits_end_of_response_sentinel():
-    handler = _minimax_handler(FakeHTTPClient(stream_response=FakeStreamResponse([])))
+    handler = _minimax_handler(FakeHTTPClient())
 
     assert list(handler.process(EndOfResponse())) == [AUDIO_RESPONSE_DONE]
 
 
 def test_minimax_tts_surfaces_provider_errors():
-    stream_response = FakeStreamResponse(
-        [
+    websocket = FakeWebSocket(
+        _ws_messages(
             {
+                "event": "task_continued",
                 "data": None,
+                "is_final": True,
                 "base_resp": {"status_code": 1004, "status_msg": "invalid api key"},
             }
-        ]
+        )
     )
-    handler = _minimax_handler(FakeHTTPClient(stream_response=stream_response))
+    handler = _minimax_handler(FakeHTTPClient(), websocket=websocket)
 
     with pytest.raises(RuntimeError, match="invalid api key"):
         list(handler.process(TTSInput(text="hello")))
@@ -670,12 +830,19 @@ def test_minimax_tts_surfaces_provider_errors():
 
 def test_minimax_tts_drops_audio_after_interruption(monkeypatch):
     cancel_scope = CancelScope()
-    stream_response = FakeStreamResponse([_sse_event(np.arange(600, dtype=np.int16))])
-    client = FakeHTTPClient(stream_response=stream_response, on_stream=cancel_scope.cancel)
-    handler = _minimax_handler(client, cancel_scope=cancel_scope)
+    websocket = FakeWebSocket(
+        _ws_messages(_ws_event(np.arange(600, dtype=np.int16))),
+        on_continue=cancel_scope.cancel,
+    )
+    handler = _minimax_handler(
+        FakeHTTPClient(),
+        cancel_scope=cancel_scope,
+        websocket=websocket,
+    )
     monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *args, **kwargs: None)
 
     assert list(handler.process(TTSInput(text="hello"))) == []
+    assert websocket.closed is True
 
 
 def test_minimax_tts_cancels_after_first_streamed_chunk(monkeypatch):
@@ -683,14 +850,20 @@ def test_minimax_tts_cancels_after_first_streamed_chunk(monkeypatch):
     first = np.arange(512, dtype=np.int16)
     second = np.arange(512, 1024, dtype=np.int16)
 
-    def iter_text():
-        yield f"data: {json.dumps(_sse_event(first))}\n\n"
+    def cancel_then_second():
         cancel_scope.cancel()
-        yield f"data: {json.dumps(_sse_event(second))}\n\n"
+        return _ws_event(second)
 
+    websocket = FakeWebSocket(
+        _ws_messages(
+            _ws_event(first, is_final=False),
+            cancel_then_second,
+        )
+    )
     handler = _minimax_handler(
-        FakeHTTPClient(stream_response=FakeStreamResponse(iter_text_fn=iter_text)),
+        FakeHTTPClient(),
         cancel_scope=cancel_scope,
+        websocket=websocket,
     )
     monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *args, **kwargs: None)
 
@@ -698,6 +871,27 @@ def test_minimax_tts_cancels_after_first_streamed_chunk(monkeypatch):
 
     assert len(result) == 1
     np.testing.assert_array_equal(result[0], first)
+    assert websocket.closed is True
+
+
+def test_minimax_tts_reuses_websocket_across_sentences(monkeypatch):
+    websocket = FakeWebSocket(
+        _ws_messages(
+            _ws_event(np.arange(64, dtype=np.int16)),
+            _ws_event(np.arange(64, 128, dtype=np.int16)),
+        )
+    )
+    handler = _minimax_handler(FakeHTTPClient(), websocket=websocket)
+    monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *args, **kwargs: None)
+
+    assert list(handler.process(TTSInput(text="first")))
+    assert list(handler.process(TTSInput(text="second")))
+
+    assert len(websocket.connect_calls) == 1
+    assert websocket.sent[1:] == [
+        {"event": "task_continue", "text": "first"},
+        {"event": "task_continue", "text": "second"},
+    ]
 
 
 def test_minimax_tts_nonstream_validates_returned_sample_rate(monkeypatch):
@@ -731,12 +925,16 @@ def test_minimax_tts_nonstream_sends_wav_payload(monkeypatch):
 
 
 def test_minimax_cleanup_does_not_close_injected_client():
-    client = FakeHTTPClient(stream_response=FakeStreamResponse([]))
-    handler = _minimax_handler(client)
+    websocket = FakeWebSocket(_ws_messages(_ws_event(np.arange(32, dtype=np.int16))))
+    client = FakeHTTPClient()
+    handler = _minimax_handler(client, websocket=websocket)
+    list(handler.process(TTSInput(text="hello")))
 
     handler.cleanup()
 
     assert client.closed is False
+    assert websocket.closed is True
+    assert websocket.sent[-1] == {"event": "task_finish"}
 
 
 def test_custom_service_json_profile_selects_all_three_providers():
@@ -756,8 +954,12 @@ def test_custom_service_json_profile_selects_all_three_providers():
     assert args.module_kwargs.tts == "minimax"
     assert args.responses_api_language_model_handler_kwargs.model_name == "deepseek-v4-flash"
     assert args.responses_api_language_model_handler_kwargs.responses_api_base_url == "https://api.deepseek.com"
-    assert args.responses_api_language_model_handler_kwargs.responses_api_disable_thinking is False
+    assert args.responses_api_language_model_handler_kwargs.responses_api_disable_thinking is True
+    assert args.responses_api_language_model_handler_kwargs.responses_api_connection_keepalive_s == 300
+    assert args.responses_api_language_model_handler_kwargs.chat_size == 8
+    assert args.responses_api_language_model_handler_kwargs.compact_history is False
     assert args.responses_api_language_model_handler_kwargs.stream_batch_sentences == 1
+    assert args.vad_handler_kwargs.speculative_reopen_ms == 250
     assert args.vad_handler_kwargs.speech_pad_ms == 80
 
 
