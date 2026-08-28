@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-08-28T08:17:01.884565+00:00",
+  "config": {
+    "url": "ws://127.0.0.1:8765/v1/realtime",
+    "corpus": "benchmarks/synthetic-conversations.json",
+    "audio_dir": "/tmp/s2s-latency-100x10/audio",
+    "concurrency": 1,
+    "chunk_ms": 20,
+    "trailing_silence_ms": 500,
+    "turn_gap_ms": 100,
+    "case_gap_ms": 300,
+    "minimax_tts_speed": 1.0,
+    "stopped_early": true,
+    "completed_cases": 36,
+    "stop_reason": "user_requested_stop",
+    "started_at": "2026-08-28T15:37:21+08:00",
+    "stopped_at": "2026-08-28T16:12:56+08:00"
+  },
+  "planned_cases": 100,
+  "planned_turns": 1000,
+  "records": 360,
+  "successful_turns": 360,
+  "failed_turns": 0,
+  "success_rate": 1.0,
+  "errors_by_code": {},
+  "metrics_ms": {
+    "asr_final_to_first_assistant_text_ms": {
+      "count": 360,
+      "min": 350.19,
+      "mean": 1668.454,
+      "p50": 877.903,
+      "p90": 3621.559,
+      "p95": 4663.456,
+      "p99": 11761.695,
+      "max": 22320.589
+    },
+    "audio_send_ms": {
+      "count": 360,
+      "min": 2130.928,
+      "mean": 3877.703,
+      "p50": 3766.612,
+      "p90": 5018.542,
+      "p95": 5249.637,
+      "p99": 6177.566,
+      "max": 6329.503
+    },
+    "connection_ms": {
+      "count": 360,
+      "min": 4.559,
+      "mean": 10.561,
+      "p50": 8.678,
+      "p90": 12.817,
+      "p95": 27.422,
+      "p99": 52.094,
+      "max": 52.094
+    },
+    "first_assistant_text_to_first_audio_ms": {
+      "count": 360,
+      "min": 0.568,
+      "mean": 207.399,
+      "p50": 204.642,
+      "p90": 256.157,
+      "p95": 345.064,
+      "p99": 521.861,
+      "max": 1685.502
+    },
+    "first_audio_to_audio_done_ms": {
+      "count": 360,
+      "min": 248.399,
+      "mean": 620.164,
+      "p50": 564.57,
+      "p90": 953.711,
+      "p95": 1099.265,
+      "p99": 1374.686,
+      "max": 2665.416
+    },
+    "input_audio_end_to_speech_stop_ms": {
+      "count": 360,
+      "min": -4210.894,
+      "mean": -496.875,
+      "p50": 100.363,
+      "p90": 131.458,
+      "p95": 139.434,
+      "p99": 150.041,
+      "max": 158.79
+    },
+    "input_audio_ms": {
+      "count": 360,
+      "min": 1611.206,
+      "mean": 3352.273,
+      "p50": 3239.783,
+      "p90": 4493.216,
+      "p95": 4724.732,
+      "p99": 5650.713,
+      "max": 5808.611
+    },
+    "speech_start_to_first_asr_partial_ms": {
+      "count": 346,
+      "min": 369.545,
+      "mean": 588.636,
+      "p50": 518.88,
+      "p90": 727.287,
+      "p95": 819.052,
+      "p99": 2286.082,
+      "max": 4116.842
+    },
+    "speech_stop_to_asr_final_ms": {
+      "count": 360,
+      "min": 14.635,
+      "mean": 273.581,
+      "p50": 118.82,
+      "p90": 247.301,
+      "p95": 1725.928,
+      "p99": 2649.725,
+      "max": 3925.774
+    },
+    "speech_stop_to_first_audio_ms": {
+      "count": 360,
+      "min": 557.858,
+      "mean": 2149.434,
+      "p50": 1262.191,
+      "p90": 4002.637,
+      "p95": 4873.588,
+      "p99": 13819.482,
+      "max": 22608.503
+    },
+    "speech_stop_to_response_done_ms": {
+      "count": 360,
+      "min": 1048.823,
+      "mean": 2770.704,
+      "p50": 1879.959,
+      "p90": 4664.213,
+      "p95": 5759.666,
+      "p99": 14300.749,
+      "max": 23086.993
+    },
+    "turn_start_to_speech_start_ms": {
+      "count": 360,
+      "min": 383.368,
+      "mean": 425.523,
+      "p50": 421.423,
+      "p90": 458.63,
+      "p95": 487.81,
+      "p99": 497.523,
+      "max": 541.81
+    },
+    "turn_total_ms": {
+      "count": 360,
+      "min": 3282.987,
+      "mean": 5626.102,
+      "p50": 5137.302,
+      "p90": 6730.963,
+      "p95": 7669.634,
+      "p99": 16474.544,
+      "max": 24703.954
+    }
+  }
+}

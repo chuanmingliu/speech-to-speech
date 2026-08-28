@@ -31,6 +31,7 @@ from speech_to_speech.arguments_classes.faster_whisper_stt_arguments import (
 )
 from speech_to_speech.arguments_classes.kokoro_tts_arguments import KokoroTTSHandlerArguments
 from speech_to_speech.arguments_classes.language_model_arguments import LanguageModelHandlerArguments
+from speech_to_speech.arguments_classes.minimax_tts_arguments import MiniMaxTTSHandlerArguments
 from speech_to_speech.arguments_classes.mlx_audio_whisper_arguments import (
     MLXAudioWhisperSTTHandlerArguments,
 )
@@ -107,6 +108,7 @@ class ParsedArguments:
     pocket_tts_handler_kwargs: PocketTTSHandlerArguments
     kokoro_tts_handler_kwargs: KokoroTTSHandlerArguments
     qwen3_tts_handler_kwargs: Qwen3TTSHandlerArguments
+    minimax_tts_handler_kwargs: MiniMaxTTSHandlerArguments
 
 
 def rename_args(args: Any, prefix: str) -> None:
@@ -165,6 +167,7 @@ def parse_arguments() -> ParsedArguments:
             PocketTTSHandlerArguments,
             KokoroTTSHandlerArguments,
             Qwen3TTSHandlerArguments,
+            MiniMaxTTSHandlerArguments,
         )
     )
 
@@ -200,6 +203,7 @@ def parse_arguments() -> ParsedArguments:
         pocket_tts_handler_kwargs=by_type[PocketTTSHandlerArguments],
         kokoro_tts_handler_kwargs=by_type[KokoroTTSHandlerArguments],
         qwen3_tts_handler_kwargs=by_type[Qwen3TTSHandlerArguments],
+        minimax_tts_handler_kwargs=by_type[MiniMaxTTSHandlerArguments],
     )
 
 
@@ -395,6 +399,7 @@ def _build_pipeline_handlers(
     pocket_tts_handler_kwargs: PocketTTSHandlerArguments,
     kokoro_tts_handler_kwargs: KokoroTTSHandlerArguments,
     qwen3_tts_handler_kwargs: Qwen3TTSHandlerArguments,
+    minimax_tts_handler_kwargs: MiniMaxTTSHandlerArguments,
     cancel_scope: CancelScope | None = None,
     speculative_turns: SpeculativeTurnTracker | None = None,
 ) -> list[Any]:
@@ -461,6 +466,7 @@ def _build_pipeline_handlers(
         pocket_tts_handler_kwargs,
         kokoro_tts_handler_kwargs,
         qwen3_tts_handler_kwargs,
+        minimax_tts_handler_kwargs,
         cancel_scope=cancel_scope,
         speculative_turns=speculative_turns,
     )
@@ -486,6 +492,7 @@ def _build_realtime_pipeline_unit(
     pocket_tts_handler_kwargs: PocketTTSHandlerArguments,
     kokoro_tts_handler_kwargs: KokoroTTSHandlerArguments,
     qwen3_tts_handler_kwargs: Qwen3TTSHandlerArguments,
+    minimax_tts_handler_kwargs: MiniMaxTTSHandlerArguments,
 ) -> "PipelineUnit":
     """Build one isolated realtime pipeline (own queues, events, service, handlers).
 
@@ -509,6 +516,7 @@ def _build_realtime_pipeline_unit(
     pocket_tts_kw = deepcopy(pocket_tts_handler_kwargs)
     kokoro_tts_kw = deepcopy(kokoro_tts_handler_kwargs)
     qwen3_tts_kw = deepcopy(qwen3_tts_handler_kwargs)
+    minimax_tts_kw = deepcopy(minimax_tts_handler_kwargs)
 
     should_listen = Event()
     response_playing = Event()
@@ -584,6 +592,7 @@ def _build_realtime_pipeline_unit(
         pocket_tts_handler_kwargs=pocket_tts_kw,
         kokoro_tts_handler_kwargs=kokoro_tts_kw,
         qwen3_tts_handler_kwargs=qwen3_tts_kw,
+        minimax_tts_handler_kwargs=minimax_tts_kw,
         cancel_scope=cancel_scope,
         speculative_turns=speculative_turns,
     )
@@ -622,6 +631,7 @@ def build_pipeline(
     pocket_tts_handler_kwargs: PocketTTSHandlerArguments,
     kokoro_tts_handler_kwargs: KokoroTTSHandlerArguments,
     qwen3_tts_handler_kwargs: Qwen3TTSHandlerArguments,
+    minimax_tts_handler_kwargs: MiniMaxTTSHandlerArguments,
     queues_and_events: dict[str, Any],
 ) -> ThreadManager:
     stop_event = queues_and_events["stop_event"]
@@ -684,6 +694,7 @@ def build_pipeline(
                 pocket_tts_handler_kwargs=pocket_tts_handler_kwargs,
                 kokoro_tts_handler_kwargs=kokoro_tts_handler_kwargs,
                 qwen3_tts_handler_kwargs=qwen3_tts_handler_kwargs,
+                minimax_tts_handler_kwargs=minimax_tts_handler_kwargs,
             )
             for i in range(pool_size)
         ]
@@ -768,6 +779,7 @@ def build_pipeline(
         pocket_tts_handler_kwargs=pocket_tts_handler_kwargs,
         kokoro_tts_handler_kwargs=kokoro_tts_handler_kwargs,
         qwen3_tts_handler_kwargs=qwen3_tts_handler_kwargs,
+        minimax_tts_handler_kwargs=minimax_tts_handler_kwargs,
         cancel_scope=queues_and_events["cancel_scope"],
     )
 
@@ -954,6 +966,7 @@ def get_tts_handler(
     pocket_tts_handler_kwargs: PocketTTSHandlerArguments,
     kokoro_tts_handler_kwargs: KokoroTTSHandlerArguments,
     qwen3_tts_handler_kwargs: Qwen3TTSHandlerArguments,
+    minimax_tts_handler_kwargs: MiniMaxTTSHandlerArguments,
     cancel_scope: CancelScope | None = None,
     speculative_turns: SpeculativeTurnTracker | None = None,
 ) -> BaseHandler[TTSIn, TTSOut]:
@@ -1027,6 +1040,7 @@ def get_tts_handler(
             queue_out=send_audio_chunks_queue,
             setup_args=(should_listen,),
             setup_kwargs={
+                "speed": minimax_tts_handler_kwargs.minimax_tts_speed,
                 "cancel_scope": cancel_scope,
                 "speculative_turns": speculative_turns,
             },
@@ -1101,6 +1115,7 @@ def main() -> None:
         args.pocket_tts_handler_kwargs,
         args.kokoro_tts_handler_kwargs,
         args.qwen3_tts_handler_kwargs,
+        args.minimax_tts_handler_kwargs,
         queues_and_events,
     )
 

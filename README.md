@@ -206,6 +206,8 @@ Set `MINIMAX_TTS_STREAM=false` to use the HTTP one-shot WAV fallback. For
 China-platform keys, use
 `MINIMAX_TTS_WEBSOCKET_ENDPOINT=wss://api.minimaxi.com/ws/v1/t2a_v2`; for
 global-platform keys, use `wss://api.minimax.io/ws/v1/t2a_v2`.
+Set `minimax_tts_speed` in the JSON profile (or pass
+`--minimax_tts_speed`) to a value from `0.5` to `2.0`; `1.0` is normal speed.
 The checked-in profile also disables DeepSeek's default thinking mode, keeps
 provider connections warm, seeds DeepSeek's prefix/KV cache with the same
 voice-system prompt plus an empty user message, shortens the speculative turn

@@ -124,6 +124,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         api_key: str | None = None,
         model: str | None = None,
         voice_id: str | None = None,
+        speed: float | None = None,
         endpoint: str | None = None,
         websocket_endpoint: str | None = None,
         language_boost: str | None = None,
@@ -150,6 +151,13 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         self.api_key = api_key or os.getenv("MINIMAX_TTS_API_KEY")
         self.model = model or os.getenv("MINIMAX_TTS_MODEL", "speech-2.8-turbo")
         self.voice_id = voice_id or os.getenv("MINIMAX_TTS_VOICE_ID")
+        self.speed = (
+            _env_float("MINIMAX_TTS_SPEED", 1.0)
+            if speed is None
+            else float(speed)
+        )
+        if not 0.5 <= self.speed <= 2.0:
+            raise ValueError("MiniMax TTS speed must be between 0.5 and 2.0.")
         configured_endpoint = endpoint or os.getenv(
             "MINIMAX_TTS_ENDPOINT",
             "https://api.minimax.io/v1/t2a_v2",
@@ -384,7 +392,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             "language_boost": self.language_boost,
             "voice_setting": {
                 "voice_id": self.voice_id,
-                "speed": 1.0,
+                "speed": self.speed,
                 "vol": 1.0,
                 "pitch": 0,
                 "english_normalization": False,
@@ -425,6 +433,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             self.websocket_endpoint if self.stream else self.endpoint,
             self.model,
             self.voice_id,
+            self.speed,
             self.language_boost,
             self.sample_rate,
             self.blocksize,
@@ -453,7 +462,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             "output_format": "hex",
             "voice_setting": {
                 "voice_id": self.voice_id,
-                "speed": 1.0,
+                "speed": self.speed,
                 "vol": 1.0,
                 "pitch": 0,
             },

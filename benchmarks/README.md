@@ -54,7 +54,9 @@ uv run python scripts/synthetic_latency_benchmark.py run \
 ```
 
 Set `--concurrency` no higher than the backend's `num_pipelines`; excess
-sessions are rejected by the pool. For authenticated deployments, place the
+sessions are rejected by the pool. The default 300 ms `--case-gap-ms` lets a
+released pipeline finish its `SESSION_END` drain before another case claims
+the slot. For authenticated deployments, place the
 token in `REALTIME_API_KEY`, or select another variable with
 `--bearer-token-env`.
 
@@ -66,6 +68,8 @@ It was generated and unit-tested here, but was not sent to hosted providers.
 The selected results directory receives:
 
 - `turns.jsonl`: nested, lossless per-turn records.
+- `turns.partial.jsonl`: flushed after every completed case and retained only
+  if a run is interrupted.
 - `turns.csv`: flattened timestamps and latency metrics for analysis.
 - `summary.json`: run configuration, success/failure counts, and aggregate
   min/mean/p50/p90/p95/p99/max values.

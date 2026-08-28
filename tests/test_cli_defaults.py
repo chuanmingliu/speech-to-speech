@@ -6,6 +6,7 @@ from speech_to_speech.arguments_classes.facebookmms_tts_arguments import Faceboo
 from speech_to_speech.arguments_classes.faster_whisper_stt_arguments import FasterWhisperSTTHandlerArguments
 from speech_to_speech.arguments_classes.kokoro_tts_arguments import KokoroTTSHandlerArguments
 from speech_to_speech.arguments_classes.language_model_arguments import LanguageModelHandlerArguments
+from speech_to_speech.arguments_classes.minimax_tts_arguments import MiniMaxTTSHandlerArguments
 from speech_to_speech.arguments_classes.mlx_audio_whisper_arguments import MLXAudioWhisperSTTHandlerArguments
 from speech_to_speech.arguments_classes.module_arguments import ModuleArguments
 from speech_to_speech.arguments_classes.paraformer_stt_arguments import ParaformerSTTHandlerArguments
@@ -28,6 +29,7 @@ def test_release_defaults_match_responses_api_parakeet_qwen3_realtime_profile():
     vad_args = VADHandlerArguments()
     responses_api_args = ResponsesApiLanguageModelHandlerArguments()
     qwen3_args = Qwen3TTSHandlerArguments()
+    minimax_args = MiniMaxTTSHandlerArguments()
 
     assert module_args.mode == "realtime"
     assert module_args.stt == "parakeet-tdt"
@@ -52,6 +54,7 @@ def test_release_defaults_match_responses_api_parakeet_qwen3_realtime_profile():
     assert qwen3_args.qwen3_tts_non_streaming_mode is True
     assert qwen3_args.qwen3_tts_ref_audio is None
     assert qwen3_args.qwen3_tts_mlx_quantization == "6bit"
+    assert minimax_args.minimax_tts_speed is None
 
 
 # -- ParsedArguments dataclass tests ------------------------------------------
@@ -74,6 +77,7 @@ EXPECTED_FIELD_TYPES = {
     "pocket_tts_handler_kwargs": PocketTTSHandlerArguments,
     "kokoro_tts_handler_kwargs": KokoroTTSHandlerArguments,
     "qwen3_tts_handler_kwargs": Qwen3TTSHandlerArguments,
+    "minimax_tts_handler_kwargs": MiniMaxTTSHandlerArguments,
 }
 
 
@@ -114,6 +118,17 @@ def test_parse_arguments_accepts_qwen3_tts_backend_override():
         sys.argv = original_argv
 
     assert args.qwen3_tts_handler_kwargs.qwen3_tts_backend == "torch"
+
+
+def test_parse_arguments_accepts_minimax_speed_override():
+    original_argv = sys.argv[:]
+    try:
+        sys.argv = ["speech-to-speech", "--minimax_tts_speed", "1.25"]
+        args = parse_arguments()
+    finally:
+        sys.argv = original_argv
+
+    assert args.minimax_tts_handler_kwargs.minimax_tts_speed == 1.25
 
 
 def test_parse_arguments_transformers_backend():

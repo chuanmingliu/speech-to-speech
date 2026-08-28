@@ -9,6 +9,7 @@ import scripts.synthetic_latency_benchmark as benchmark
 from scripts.synthetic_latency_benchmark import (
     TurnLatencyRecorder,
     build_cases,
+    build_parser,
     load_corpus,
     summarize_records,
     validate_cases,
@@ -28,6 +29,14 @@ def test_build_cases_creates_100_coherent_ten_turn_conversations():
     assert all(len({turn.turn_id for turn in case.turns}) == len(case.turns) for case in cases)
     assert all(turn.prompt.strip() for case in cases for turn in case.turns)
     assert len({turn.prompt for case in cases for turn in case.turns}) >= 900
+
+
+def test_live_runner_defaults_to_single_lane_with_release_gap(tmp_path):
+    args = build_parser().parse_args(["run", "--results-dir", str(tmp_path)])
+
+    assert args.concurrency == 1
+    assert args.case_gap_ms == 300
+    assert args.turn_gap_ms == 100
 
 
 def test_corpus_round_trip_is_deterministic(tmp_path):

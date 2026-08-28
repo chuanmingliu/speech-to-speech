@@ -15,6 +15,7 @@ from speech_to_speech.arguments_classes.chat_tts_arguments import ChatTTSHandler
 from speech_to_speech.arguments_classes.facebookmms_tts_arguments import FacebookMMSTTSHandlerArguments
 from speech_to_speech.arguments_classes.faster_whisper_stt_arguments import FasterWhisperSTTHandlerArguments
 from speech_to_speech.arguments_classes.kokoro_tts_arguments import KokoroTTSHandlerArguments
+from speech_to_speech.arguments_classes.minimax_tts_arguments import MiniMaxTTSHandlerArguments
 from speech_to_speech.arguments_classes.mlx_audio_whisper_arguments import MLXAudioWhisperSTTHandlerArguments
 from speech_to_speech.arguments_classes.module_arguments import ModuleArguments
 from speech_to_speech.arguments_classes.paraformer_stt_arguments import ParaformerSTTHandlerArguments
@@ -177,6 +178,7 @@ def _minimax_handler(
     stream=True,
     *,
     websocket=None,
+    speed=None,
     warmup_connection=None,
     warmup_model=None,
     model_warmup_text=None,
@@ -192,6 +194,7 @@ def _minimax_handler(
             "api_key": "test-key",
             "model": "speech-2.8-turbo",
             "voice_id": "test-voice",
+            "speed": speed,
             "endpoint": "https://api.minimax.io/v1/t2a_v2",
             "websocket_endpoint": "wss://api.minimax.io/ws/v1/t2a_v2",
             "language_boost": "auto",
@@ -591,7 +594,7 @@ def test_minimax_tts_streams_pcm_and_yields_padded_chunks(monkeypatch):
     samples = np.arange(700, dtype=np.int16)
     websocket = FakeWebSocket(_ws_messages(_ws_event(samples)))
     client = FakeHTTPClient()
-    handler = _minimax_handler(client, websocket=websocket)
+    handler = _minimax_handler(client, websocket=websocket, speed=1.25)
     monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *args, **kwargs: None)
 
     result = list(handler.process(TTSInput(text="你好", language_code="zh")))
@@ -611,6 +614,7 @@ def test_minimax_tts_streams_pcm_and_yields_padded_chunks(monkeypatch):
     assert task_start["event"] == "task_start"
     assert task_start["model"] == "speech-2.8-turbo"
     assert task_start["voice_setting"]["voice_id"] == "test-voice"
+    assert task_start["voice_setting"]["speed"] == 1.25
     assert task_start["audio_setting"] == {
         "sample_rate": 16000,
         "format": "pcm",
@@ -618,6 +622,12 @@ def test_minimax_tts_streams_pcm_and_yields_padded_chunks(monkeypatch):
     }
     assert task_start["continuous_sound"] is False
     assert task_continue == {"event": "task_continue", "text": "你好"}
+
+
+@pytest.mark.parametrize("speed", [0.49, 2.01])
+def test_minimax_tts_rejects_speed_outside_provider_range(speed):
+    with pytest.raises(ValueError, match="between 0.5 and 2.0"):
+        _minimax_handler(FakeHTTPClient(), speed=speed)
 
 
 def test_minimax_tts_warms_persistent_websocket_task():
@@ -959,6 +969,7 @@ def test_custom_service_json_profile_selects_all_three_providers():
     assert args.responses_api_language_model_handler_kwargs.chat_size == 8
     assert args.responses_api_language_model_handler_kwargs.compact_history is False
     assert args.responses_api_language_model_handler_kwargs.stream_batch_sentences == 1
+    assert args.minimax_tts_handler_kwargs.minimax_tts_speed == 1.0
     assert args.vad_handler_kwargs.speculative_reopen_ms == 250
     assert args.vad_handler_kwargs.speech_pad_ms == 80
 
@@ -985,8 +996,9 @@ def test_get_stt_handler_builds_tencent_adapter(monkeypatch):
 def test_get_tts_handler_builds_minimax_adapter_with_runtime_guards(monkeypatch):
     recorded = {}
 
-    def fake_setup(self, should_listen, cancel_scope=None, speculative_turns=None):
+    def fake_setup(self, should_listen, speed=None, cancel_scope=None, speculative_turns=None):
         recorded["should_listen"] = should_listen
+        recorded["speed"] = speed
         recorded["cancel_scope"] = cancel_scope
         recorded["speculative_turns"] = speculative_turns
 
@@ -1006,6 +1018,7 @@ def test_get_tts_handler_builds_minimax_adapter_with_runtime_guards(monkeypatch)
         PocketTTSHandlerArguments(),
         KokoroTTSHandlerArguments(),
         Qwen3TTSHandlerArguments(),
+        MiniMaxTTSHandlerArguments(minimax_tts_speed=1.25),
         cancel_scope=cancel_scope,
         speculative_turns=speculative_turns,
     )
@@ -1013,6 +1026,7 @@ def test_get_tts_handler_builds_minimax_adapter_with_runtime_guards(monkeypatch)
     assert isinstance(handler, MiniMaxTTSHandler)
     assert recorded == {
         "should_listen": should_listen,
+        "speed": 1.25,
         "cancel_scope": cancel_scope,
         "speculative_turns": speculative_turns,
     }

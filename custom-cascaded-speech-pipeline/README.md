@@ -45,6 +45,7 @@ Work landed in three passes, then a review pass.
 
 - Default is the official T2A WebSocket protocol, with hex **PCM** at 16 kHz.
 - One `task_start` is kept open and reused for sequential `task_continue` sentences.
+- `minimax_tts_speed` controls provider speech speed from 0.5× to 2.0×.
 - `MINIMAX_TTS_STREAM=false` keeps the HTTP one-shot WAV fallback.
 - Cancellation closes the active task so unread audio cannot enter the next response.
 - WebSocket connection + task handshake are completed before user text reaches TTS.

@@ -32,6 +32,7 @@ TENCENT_ASR_LANGUAGE=zh
 TENCENT_ASR_APP_ID=
 TENCENT_ASR_OPEN_TIMEOUT_S=1.5
 MINIMAX_TTS_MODEL=speech-2.8-turbo
+MINIMAX_TTS_SPEED=1.0
 MINIMAX_TTS_LANGUAGE_BOOST=auto
 MINIMAX_TTS_WARMUP=true
 MINIMAX_TTS_MODEL_WARMUP=true
@@ -70,6 +71,9 @@ the HTTP endpoint is used only when `MINIMAX_TTS_STREAM=false` (and for the
 one-shot connection probe). If the WebSocket setting is omitted, it is derived
 from `MINIMAX_TTS_ENDPOINT`. An application-level nonzero
 `base_resp.status_code` is a failure even if the transport itself succeeded.
+The checked-in JSON profile exposes `minimax_tts_speed`; valid values are
+`0.5` through `2.0`, with `1.0` preserving the original pace. The JSON/CLI
+value takes precedence over `MINIMAX_TTS_SPEED`.
 
 The low-latency profile disables DeepSeek thinking, keeps hosted HTTP
 connections reusable for five minutes, and retains only eight conversational

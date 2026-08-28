@@ -18,6 +18,7 @@
   "speculative_reopen_ms": 250,
   "speech_pad_ms": 80,
   "tts": "minimax",
+  "minimax_tts_speed": 1.1,
   "num_pipelines": 1,
   "log_level": "info"
 }

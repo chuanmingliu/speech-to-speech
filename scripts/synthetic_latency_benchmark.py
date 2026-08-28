@@ -906,12 +906,21 @@ def prepare_audio(
         raise RuntimeError("Audio preparation requires the macOS `say` command.")
     audio_dir.mkdir(parents=True, exist_ok=True)
     paths: dict[str, Path] = {}
-    for case in cases:
-        for turn in case.turns:
-            path = _audio_cache_path(audio_dir, turn.prompt, voice)
-            if not path.exists():
-                _synthesize_prompt(turn.prompt, path, voice)
-            paths[turn.turn_id] = path
+    turns = [turn for case in cases for turn in case.turns]
+    synthesized = 0
+    for index, turn in enumerate(turns, start=1):
+        path = _audio_cache_path(audio_dir, turn.prompt, voice)
+        if not path.exists():
+            _synthesize_prompt(turn.prompt, path, voice)
+            synthesized += 1
+        paths[turn.turn_id] = path
+        if index % 100 == 0 or index == len(turns):
+            logger.info(
+                "Audio preparation: %d/%d turns ready (%d newly synthesized)",
+                index,
+                len(turns),
+                synthesized,
+            )
     return paths
 
 
@@ -1102,6 +1111,15 @@ async def _run_case(
                     timeout_s=timeout_s,
                 )
                 records.append(record)
+                first_audio_ms = record["latency_ms"].get("speech_stop_to_first_audio_ms")
+                logger.info(
+                    "Case %s turn %d/%d: %s, speech-stop→first-audio=%s",
+                    case.case_id,
+                    turn_index,
+                    len(case.turns),
+                    "ok" if record["success"] else f"failed ({record['error_code']})",
+                    f"{first_audio_ms:.1f}ms" if first_audio_ms is not None else "n/a",
+                )
                 if not record["success"]:
                     break
                 if turn_gap_ms > 0:
@@ -1140,6 +1158,16 @@ def _write_summary_markdown(path: Path, summary: dict[str, Any], config: dict[st
         "# Synthetic latency benchmark summary",
         "",
         f"- URL: `{config['url']}`",
+    ]
+    if config.get("stopped_early"):
+        lines.extend(
+            [
+                "- Run state: stopped early at user request",
+                f"- Fully checkpointed cases: {config.get('completed_cases', 0)}",
+            ]
+        )
+    lines.extend(
+        [
         f"- Cases planned: {summary['planned_cases']}",
         f"- Turns planned: {summary['planned_turns']}",
         f"- Turns recorded: {summary['records']}",
@@ -1148,7 +1176,8 @@ def _write_summary_markdown(path: Path, summary: dict[str, Any], config: dict[st
         f"- Success rate: {summary['success_rate'] * 100:.2f}%",
         "",
         "## Latency metrics",
-    ]
+        ]
+    )
     for name, values in summary["metrics_ms"].items():
         lines.append(
             f"- `{name}`: p50={values['p50']:.3f} ms, p95={values['p95']:.3f} ms, "
@@ -1212,7 +1241,8 @@ async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     async def run_limited(case: ConversationCase) -> list[dict[str, Any]]:
         async with semaphore:
             try:
-                return await _run_case(
+                logger.info("Starting case %s (%d turns)", case.case_id, len(case.turns))
+                case_records = await _run_case(
                     case,
                     url=args.url,
                     headers=headers,
@@ -1222,6 +1252,13 @@ async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                     timeout_s=args.turn_timeout,
                     turn_gap_ms=args.turn_gap_ms,
                 )
+                logger.info(
+                    "Finished case %s: %d/%d turns successful",
+                    case.case_id,
+                    sum(bool(record["success"]) for record in case_records),
+                    len(case.turns),
+                )
+                return case_records
             except Exception as exc:
                 recorder = TurnLatencyRecorder(
                     case_id=case.case_id,
@@ -1234,10 +1271,23 @@ async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 recorder.mark_error(type(exc).__name__, str(exc))
                 return [recorder.to_record()]
+            finally:
+                # The backend releases a pipeline only after SESSION_END has
+                # propagated through every handler. Hold this concurrency slot
+                # briefly so the next case doesn't race that release.
+                if args.case_gap_ms > 0:
+                    await asyncio.sleep(args.case_gap_ms / 1000.0)
 
     records: list[dict[str, Any]] = []
-    for completed in asyncio.as_completed([run_limited(case) for case in cases]):
-        records.extend(await completed)
+    args.results_dir.mkdir(parents=True, exist_ok=True)
+    partial_path = args.results_dir / "turns.partial.jsonl"
+    with partial_path.open("w") as partial:
+        for completed in asyncio.as_completed([run_limited(case) for case in cases]):
+            case_records = await completed
+            records.extend(case_records)
+            for record in case_records:
+                partial.write(json.dumps(record, ensure_ascii=False) + "\n")
+            partial.flush()
 
     config = {
         "url": args.url,
@@ -1250,16 +1300,19 @@ async def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "trailing_silence_ms": args.trailing_silence_ms,
         "turn_timeout_s": args.turn_timeout,
         "turn_gap_ms": args.turn_gap_ms,
+        "case_gap_ms": args.case_gap_ms,
         "voice": args.voice,
         "bearer_token_env": args.bearer_token_env,
     }
-    return write_results(
+    summary = write_results(
         args.results_dir,
         records,
         config=config,
         planned_cases=len(cases),
         planned_turns=sum(len(case.turns) for case in cases),
     )
+    partial_path.unlink(missing_ok=True)
+    return summary
 
 
 def _positive_int(value: str) -> int:
@@ -1298,6 +1351,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--trailing-silence-ms", type=_positive_int, default=1000)
     run.add_argument("--turn-timeout", type=float, default=30.0)
     run.add_argument("--turn-gap-ms", type=int, default=100)
+    run.add_argument("--case-gap-ms", type=int, default=300)
     run.add_argument("--voice")
     run.add_argument(
         "--bearer-token-env",
