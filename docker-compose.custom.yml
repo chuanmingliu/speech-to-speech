@@ -1,0 +1,35 @@
+# Daemon for the Tencent / DeepSeek / MiniMax realtime service.
+#
+#   docker compose -f docker-compose.custom.yml up -d --build
+#   docker compose -f docker-compose.custom.yml logs -f
+#   docker compose -f docker-compose.custom.yml down
+#
+services:
+  speech-to-speech:
+    build:
+      context: .
+      dockerfile: Dockerfile.custom
+    image: s2s-custom:latest
+    container_name: s2s
+    restart: unless-stopped
+    ports:
+      - "${S2S_HOST_PORT:-8765}:8765"
+    env_file:
+      - ${S2S_ENV_FILE:-.env.local}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; s=socket.create_connection(('127.0.0.1', 8765), 2); s.close()",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
