@@ -99,21 +99,38 @@ understates the extreme tail.
 
 ## Re-measuring
 
-Offline, in milliseconds, with no API keys and no provider traffic:
+Offline, with no API keys and no provider traffic. Two harnesses at different
+depths — the first is a model, the second runs the real thing:
 
 ```bash
+# in-process: drives _consume_streaming directly. Milliseconds to run.
 python scripts/latency_ab_benchmark.py stream          # first-chunk A/B + gap check
 python scripts/latency_ab_benchmark.py hedge           # tail vs duplicate-request cost
+
+# real pipeline: LLM handler -> LMOutputProcessor -> TTS, in real threads over
+# real HTTP/SSE from a local fake provider, with the speculative gate live.
+python scripts/latency_pipeline_benchmark.py --repeat 2
 ```
 
-To A/B against another branch, point the harness at its checkout — the old
-handler absorbs the unknown kwarg, so both of its columns come out identical,
-which is how the baseline is validated:
+The two agree closely, which is the point of having both: over the corpus the
+real pipeline measured a **median saving of 62 ms and mean of 102 ms** against
+the model's 63 ms and 102 ms, and reproduced the `en-weather` gap at 28 ms
+against the model's 27 ms. Thread and queue hops plus the speculative gate cost
+about 4–5 ms in total, and — the thing worth checking — the gate does **not**
+block the earlier first chunk, so the saving survives the real chain.
+
+To A/B against another branch, point either harness at its checkout via
+`S2S_SRC` — the old handler absorbs the unknown kwarg, so both of its columns
+come out identical, which is how the baseline is validated:
 
 ```bash
 git archive feat_0824 src | tar -x -C /tmp/base
 S2S_SRC=/tmp/base/src python scripts/latency_ab_benchmark.py stream
+S2S_SRC=/tmp/base/src python scripts/latency_pipeline_benchmark.py --repeat 2
 ```
+
+Both report a flat 0 ms on `feat_0824`, and its baseline column matches
+`feat_0829`'s, so the A/B is measuring the change and not a strawman.
 
 Against live providers, the full corpus still applies:
 
