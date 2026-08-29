@@ -86,7 +86,9 @@ def _http_endpoint(endpoint: str) -> str:
     parts = urlsplit(endpoint)
     if parts.scheme not in {"ws", "wss"}:
         return endpoint
-    path = parts.path.replace("/ws/v1/t2a_v2", "/v1/t2a_v2")
+    # There is no bidi one-shot HTTP route; both WebSocket paths map back to the
+    # single /v1/t2a_v2 endpoint used by the non-streaming fallback.
+    path = parts.path.replace("/ws/v1/t2a_v2_bidi", "/v1/t2a_v2").replace("/ws/v1/t2a_v2", "/v1/t2a_v2")
     scheme = "https" if parts.scheme == "wss" else "http"
     return urlunsplit((scheme, parts.netloc, path, parts.query, parts.fragment))
 
@@ -94,10 +96,12 @@ def _http_endpoint(endpoint: str) -> str:
 def _websocket_endpoint(endpoint: str) -> str:
     parts = urlsplit(endpoint)
     if parts.scheme in {"ws", "wss"}:
+        # An explicit ws(s) endpoint is honoured as given, so pinning the older
+        # /ws/v1/t2a_v2 path still works.
         return endpoint
     if parts.scheme not in {"http", "https"}:
         raise ValueError("MiniMax TTS endpoint must use http(s) or ws(s).")
-    path = parts.path.replace("/v1/t2a_v2", "/ws/v1/t2a_v2")
+    path = parts.path.replace("/v1/t2a_v2", "/ws/v1/t2a_v2_bidi")
     scheme = "wss" if parts.scheme == "https" else "ws"
     return urlunsplit((scheme, parts.netloc, path, parts.query, parts.fragment))
 
@@ -518,6 +522,21 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         self._last_connection_use_s = perf_counter()
         return session
 
+    def _abort_websocket_session_locked(self) -> None:
+        """End the current synthesis on a barge-in, keeping the socket if we can.
+
+        The bidi protocol has task_cancel, which discards buffered text and
+        returns the task to ``task_started``. That saves the reconnect and
+        task_start handshake the next turn would otherwise pay -- on a phone call
+        barge-ins are common, so this is the difference between an interruption
+        costing nothing and costing a cold TTS connection.
+        """
+        session = self._websocket_session
+        if session is not None and session.cancel():
+            logger.debug("MiniMax TTS task cancelled; session kept warm")
+            return
+        self._close_websocket_session_locked()
+
     def _close_websocket_session_locked(self, *, graceful: bool = False) -> None:
         session, self._websocket_session = self._websocket_session, None
         if session is not None:
@@ -708,7 +727,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         for audio_hex in self._iter_websocket_audio_hex(text):
             if self._is_cancelled(generation):
                 with self._connection_probe_lock:
-                    self._close_websocket_session_locked()
+                    self._abort_websocket_session_locked()
                 logger.info("MiniMax TTS playback cancelled (interruption)")
                 return
             got_audio = True
@@ -729,12 +748,12 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
                 pending = pending[emit_upto:]
                 if self._is_cancelled(generation):
                     with self._connection_probe_lock:
-                        self._close_websocket_session_locked()
+                        self._abort_websocket_session_locked()
                     return
 
         if self._is_cancelled(generation):
             with self._connection_probe_lock:
-                self._close_websocket_session_locked()
+                self._abort_websocket_session_locked()
             return
         if not got_audio:
             # Punctuation-only or pause-only text can complete with empty audio.

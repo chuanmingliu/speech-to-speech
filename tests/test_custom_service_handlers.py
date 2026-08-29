@@ -183,6 +183,7 @@ def _minimax_handler(
     warmup_model=None,
     model_warmup_text=None,
     prime_texts=None,
+    websocket_endpoint="wss://api.minimax.io/ws/v1/t2a_v2",
     cache_max_mb=None,
 ):
     websocket = websocket or FakeWebSocket()
@@ -197,7 +198,7 @@ def _minimax_handler(
             "voice_id": "test-voice",
             "speed": speed,
             "endpoint": "https://api.minimax.io/v1/t2a_v2",
-            "websocket_endpoint": "wss://api.minimax.io/ws/v1/t2a_v2",
+            "websocket_endpoint": websocket_endpoint,
             "language_boost": "auto",
             "client": client,
             "websocket_connect": websocket.connect,
@@ -1127,3 +1128,175 @@ def test_get_tts_handler_builds_minimax_adapter_with_runtime_guards(monkeypatch)
         "cancel_scope": cancel_scope,
         "speculative_turns": speculative_turns,
     }
+
+
+# ── MiniMax bidirectional protocol (/ws/v1/t2a_v2_bidi) ──────────────────────
+
+_BIDI_ENDPOINT = "wss://api.minimax.io/ws/v1/t2a_v2_bidi"
+
+
+def _bidi_messages(*frames):
+    """Handshake plus bidi frames. Synthesis ends on task_flushed, not is_final."""
+    return _ws_messages(*frames)
+
+
+def _bidi_audio(samples):
+    return {
+        "event": "task_continued",
+        "data": {"audio": _pcm_hex(samples)},
+        "base_resp": {"status_code": 0, "status_msg": "success"},
+    }
+
+
+def _bidi_frame(event, audio=None):
+    frame = {"event": event, "base_resp": {"status_code": 0, "status_msg": "success"}}
+    if audio is not None:
+        frame["data"] = {"audio": _pcm_hex(audio)}
+    return frame
+
+
+def _bidi_handler(**kwargs):
+    return _minimax_handler(
+        FakeHTTPClient(),
+        warmup_connection=False,
+        warmup_model=False,
+        websocket_endpoint=_BIDI_ENDPOINT,
+        **kwargs,
+    )
+
+
+def test_bidi_endpoint_is_detected():
+    from speech_to_speech.TTS.minimax_websocket import is_bidi_endpoint
+
+    assert is_bidi_endpoint(_BIDI_ENDPOINT)
+    assert is_bidi_endpoint("wss://api.minimaxi.com/ws/v1/t2a_v2_bidi/")
+    assert not is_bidi_endpoint("wss://api.minimax.io/ws/v1/t2a_v2")
+
+
+def test_http_endpoint_derivation_maps_bidi_back_to_the_oneshot_route():
+    from speech_to_speech.TTS.minimax_tts_handler import _http_endpoint, _websocket_endpoint
+
+    # There is no bidi one-shot HTTP route.
+    assert _http_endpoint(_BIDI_ENDPOINT) == "https://api.minimax.io/v1/t2a_v2"
+    # A plain HTTPS endpoint now derives the bidi socket...
+    assert _websocket_endpoint("https://api.minimax.io/v1/t2a_v2") == _BIDI_ENDPOINT
+    # ...but an explicitly pinned ws(s) endpoint is left alone.
+    assert _websocket_endpoint("wss://api.minimax.io/ws/v1/t2a_v2") == "wss://api.minimax.io/ws/v1/t2a_v2"
+
+
+def test_bidi_flushes_so_a_short_clause_is_not_held_in_the_sentence_buffer(monkeypatch):
+    """The bidi server buffers text until it judges a sentence complete.
+
+    The opening clause this pipeline flushes early ("好的，") is exactly the
+    chunk that would otherwise sit unsynthesised, so every task_continue must be
+    followed by task_flush.
+    """
+    samples = np.arange(64, dtype=np.int16)
+    websocket = FakeWebSocket(_bidi_messages(_bidi_audio(samples), _bidi_frame("task_flushed")))
+    handler = _bidi_handler(websocket=websocket)
+    monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *a, **k: None)
+
+    played = list(handler.process(TTSInput(text="好的，", language_code="zh")))
+
+    assert [m["event"] for m in websocket.sent] == ["task_start", "task_continue", "task_flush"]
+    assert b"".join(chunk.tobytes() for chunk in played).startswith(samples.tobytes())
+
+
+def test_bidi_ignores_sentence_progress_frames(monkeypatch):
+    """sentence_start / sentence_end carry no audio and must not end synthesis."""
+    head = np.arange(32, dtype=np.int16)
+    tail = np.arange(32, 64, dtype=np.int16)
+    websocket = FakeWebSocket(
+        _bidi_messages(
+            _bidi_frame("sentence_start"),
+            _bidi_audio(head),
+            _bidi_audio(tail),
+            _bidi_frame("sentence_end"),
+            _bidi_frame("task_flushed"),
+        )
+    )
+    handler = _bidi_handler(websocket=websocket)
+    monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *a, **k: None)
+
+    played = b"".join(chunk.tobytes() for chunk in handler.process(TTSInput(text="好的，", language_code="zh")))
+
+    assert played.startswith(head.tobytes() + tail.tobytes())
+
+
+def test_bidi_does_not_end_on_is_final(monkeypatch):
+    """Regression: is_final terminates the old protocol, task_flushed the new one."""
+    head = np.arange(32, dtype=np.int16)
+    tail = np.arange(32, 64, dtype=np.int16)
+    stale_final = _bidi_audio(head)
+    stale_final["is_final"] = True  # the old terminator must be ignored here
+    websocket = FakeWebSocket(
+        _bidi_messages(stale_final, _bidi_audio(tail), _bidi_frame("task_flushed"))
+    )
+    handler = _bidi_handler(websocket=websocket)
+    monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *a, **k: None)
+
+    played = b"".join(chunk.tobytes() for chunk in handler.process(TTSInput(text="好的，", language_code="zh")))
+
+    assert played.startswith(head.tobytes() + tail.tobytes()), "audio after is_final was dropped"
+
+
+def test_bidi_audio_can_ride_on_the_flush_acknowledgement(monkeypatch):
+    samples = np.arange(48, dtype=np.int16)
+    websocket = FakeWebSocket(_bidi_messages(_bidi_frame("task_flushed", audio=samples)))
+    handler = _bidi_handler(websocket=websocket)
+    monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *a, **k: None)
+
+    played = b"".join(chunk.tobytes() for chunk in handler.process(TTSInput(text="好的，", language_code="zh")))
+
+    assert played.startswith(samples.tobytes())
+
+
+def test_bidi_cancel_keeps_the_session_warm():
+    """A barge-in should cost a task_cancel, not a reconnect and handshake."""
+    from speech_to_speech.TTS.minimax_websocket import MiniMaxWebSocketSession
+
+    websocket = FakeWebSocket(
+        _ws_messages(_bidi_frame("task_canceled"))
+    )
+    session = MiniMaxWebSocketSession(
+        endpoint=_BIDI_ENDPOINT,
+        api_key="k",
+        task_start={"event": "task_start"},
+        connect=websocket.connect,
+    )
+    session.start()
+
+    assert session.cancel() is True
+    assert session.started is True, "the session must survive a cancel"
+    assert websocket.closed is False
+    assert websocket.sent[-1] == {"event": "task_cancel"}
+
+
+def test_cancel_is_unavailable_on_the_legacy_protocol():
+    from speech_to_speech.TTS.minimax_websocket import MiniMaxWebSocketSession
+
+    websocket = FakeWebSocket(_ws_messages())
+    session = MiniMaxWebSocketSession(
+        endpoint="wss://api.minimax.io/ws/v1/t2a_v2",
+        api_key="k",
+        task_start={"event": "task_start"},
+        connect=websocket.connect,
+    )
+    session.start()
+
+    # The old protocol has no interrupt: the caller must fall back to closing.
+    assert session.cancel() is False
+
+
+def test_bidi_cancel_drains_in_flight_audio_before_acknowledging():
+    from speech_to_speech.TTS.minimax_websocket import MiniMaxWebSocketSession
+
+    websocket = FakeWebSocket(
+        _ws_messages(_bidi_audio(np.arange(16, dtype=np.int16)), _bidi_frame("task_canceled"))
+    )
+    session = MiniMaxWebSocketSession(
+        endpoint=_BIDI_ENDPOINT, api_key="k", task_start={"event": "task_start"}, connect=websocket.connect
+    )
+    session.start()
+
+    assert session.cancel() is True

@@ -2,14 +2,29 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Callable, Iterator
 from typing import Any
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_WEBSOCKET_ENDPOINT = "wss://api.minimax.io/ws/v1/t2a_v2"
+# The bidirectional endpoint. Unlike ``/ws/v1/t2a_v2`` it assembles sentences
+# server-side, emits sentence_start/sentence_end, and supports task_cancel and
+# task_flush without tearing the connection down.
+DEFAULT_WEBSOCKET_ENDPOINT = "wss://api.minimax.io/ws/v1/t2a_v2_bidi"
 DEFAULT_OPEN_TIMEOUT_S = 5.0
 DEFAULT_RECEIVE_TIMEOUT_S = 30.0
+DEFAULT_CANCEL_TIMEOUT_S = 1.0
+
+# Informational frames the bidi server interleaves with audio. They carry no
+# audio of their own and must not end a synthesis.
+_BIDI_PROGRESS_EVENTS = frozenset({"sentence_start", "sentence_end", "task_continued"})
+
+
+def is_bidi_endpoint(endpoint: str) -> bool:
+    """Whether ``endpoint`` addresses the bidirectional T2A protocol."""
+    return urlsplit(endpoint).path.rstrip("/").endswith("_bidi")
 
 
 def _default_connect(
@@ -31,7 +46,21 @@ def _default_connect(
 
 
 class MiniMaxWebSocketSession:
-    """Persistent MiniMax T2A task following the official WebSocket protocol."""
+    """Persistent MiniMax T2A task.
+
+    Speaks the bidirectional protocol (``/ws/v1/t2a_v2_bidi``) when the endpoint
+    names it, and the original ``/ws/v1/t2a_v2`` protocol otherwise. The two
+    differ in ways that matter here:
+
+    * The bidi server buffers ``task_continue`` text until *it* judges a sentence
+      complete. A short opening clause ("好的，") would therefore sit
+      unsynthesised, which is exactly the chunk this pipeline most wants back
+      quickly, so every synthesis is followed by ``task_flush`` to force it out.
+    * Synthesis ends on ``task_flushed`` rather than an ``is_final`` audio frame,
+      and ``sentence_start`` / ``sentence_end`` are interleaved.
+    * ``task_cancel`` discards buffered text and returns the session to
+      ``task_started``, so a barge-in no longer costs a reconnect and handshake.
+    """
 
     def __init__(
         self,
@@ -42,12 +71,15 @@ class MiniMaxWebSocketSession:
         connect: Callable[..., Any] | None = None,
         open_timeout_s: float = DEFAULT_OPEN_TIMEOUT_S,
         receive_timeout_s: float = DEFAULT_RECEIVE_TIMEOUT_S,
+        cancel_timeout_s: float = DEFAULT_CANCEL_TIMEOUT_S,
     ) -> None:
         self.endpoint = endpoint
         self.api_key = api_key
         self.task_start = task_start
         self.open_timeout_s = open_timeout_s
         self.receive_timeout_s = receive_timeout_s
+        self.cancel_timeout_s = cancel_timeout_s
+        self.bidi = is_bidi_endpoint(endpoint)
         self._connect = connect or _default_connect
         self._ws: Any | None = None
         self.started = False
@@ -73,14 +105,17 @@ class MiniMaxWebSocketSession:
             raise RuntimeError("MiniMax TTS WebSocket session is not started.")
 
         self._send({"event": "task_continue", "text": text})
+        if self.bidi:
+            # Without this the server may hold a short clause in its sentence
+            # buffer indefinitely, waiting for punctuation that never comes.
+            self._send({"event": "task_flush"})
+
         while True:
             message = self._recv(phase="synthesis", timeout_s=self.receive_timeout_s)
             self._raise_if_failed(message)
             event = message.get("event")
             if event == "task_failed":
                 raise RuntimeError("MiniMax TTS WebSocket task failed.")
-            if event not in (None, "task_continued"):
-                raise RuntimeError(f"MiniMax TTS WebSocket returned unexpected event {event!r}.")
 
             data = message.get("data") or {}
             audio = data.get("audio")
@@ -88,8 +123,50 @@ class MiniMaxWebSocketSession:
                 if not isinstance(audio, str):
                     raise ValueError("MiniMax TTS WebSocket audio must be hex text.")
                 yield audio
+
+            if self.bidi:
+                if event == "task_flushed":
+                    return
+                if event is not None and event not in _BIDI_PROGRESS_EVENTS:
+                    # Tolerate frames this client does not model rather than
+                    # failing a live turn; the receive timeout still bounds us.
+                    logger.debug("Ignoring MiniMax bidi event %r", event)
+                continue
+
+            if event not in (None, "task_continued"):
+                raise RuntimeError(f"MiniMax TTS WebSocket returned unexpected event {event!r}.")
             if message.get("is_final") is True:
                 return
+
+    def cancel(self) -> bool:
+        """Discard buffered text, keeping the session open.
+
+        Returns ``True`` when the session survived and can synthesise again.
+        ``False`` means the caller must close it — the original protocol has no
+        interrupt, so it always returns ``False`` there.
+        """
+        if not self.bidi or self._ws is None or not self.started:
+            return False
+        try:
+            self._send({"event": "task_cancel"})
+            deadline = time.monotonic() + self.cancel_timeout_s
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    logger.info("MiniMax TTS task_cancel timed out; dropping the session")
+                    return False
+                message = self._recv(phase="cancel", timeout_s=remaining)
+                self._raise_if_failed(message)
+                event = message.get("event")
+                if event == "task_canceled":
+                    return True
+                if event == "task_failed":
+                    return False
+                # Audio already in flight arrives before the acknowledgement; the
+                # caller has stopped consuming, so it is simply drained here.
+        except Exception:
+            logger.debug("MiniMax TTS task_cancel failed", exc_info=True)
+            return False
 
     def close(self, *, graceful: bool = False) -> None:
         ws, self._ws = self._ws, None

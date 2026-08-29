@@ -123,6 +123,48 @@ This only pays when the model actually opens with a primed clause. The
 `MiniMax TTS cache hit` log line on a turn's first chunk is what tells you the
 real hit rate on live traffic; nothing here measures that.
 
+## MiniMax bidirectional protocol (`/ws/v1/t2a_v2_bidi`)
+
+The TTS WebSocket now speaks the bidirectional protocol. A plain `https` endpoint
+derives `wss://…/ws/v1/t2a_v2_bidi`; an explicitly pinned `ws(s)` endpoint is
+left alone, so `/ws/v1/t2a_v2` still works. It is not a URL swap — three
+behaviours differ and two of them bear directly on latency.
+
+**The server assembles sentences itself.** Text sent with `task_continue` enters
+a server-side buffer and is only synthesised once it forms a sentence. Text
+ending in sentence-final punctuation (`。！？…!?.` or newline) goes immediately;
+text ending in *secondary* punctuation (`，、；：,;:`) waits until enough has
+accumulated, and short unpunctuated text waits for a backstop window.
+
+That last rule would have quietly broken the clause-early flush: `好的，` is
+exactly the short, secondary-punctuated chunk the server holds back, so the one
+chunk this pipeline most wants back quickly is the one it would have delayed.
+Every synthesis therefore ends with `task_flush`, which forces the buffer out
+without closing the session. Synthesis now terminates on `task_flushed` rather
+than an `is_final` audio frame, and `sentence_start` / `sentence_end` are
+interleaved and ignored.
+
+**Barge-in no longer costs a reconnect.** The old protocol had no interrupt: an
+interruption closed the socket, so the next turn paid a fresh TCP/TLS connect
+plus the `task_start` handshake. `task_cancel` discards buffered text and returns
+the task to `task_started`, so the session stays warm. On a phone call, where
+callers interrupt often, this removes a cold TTS connection from the turn that
+follows every barge-in. The saving is not measured here — it needs a live
+provider — but it is one connect plus one handshake round trip.
+
+`continuous_sound` is already `false` in the task_start payload, which MiniMax
+documents as the lower-latency segmentation mode.
+
+### Not done: piping LLM tokens straight into `task_continue`
+
+The endpoint is explicitly designed for it, and it would remove the text upload
+from the critical path. It is not implemented because the win here is small: the
+server will not synthesise a short unpunctuated fragment, so streaming `好`,
+`的` early does not start synthesis any sooner — it starts when the `，` lands
+either way. What is saved is one upload round trip, not the ~205 ms of synthesis
+first-byte time. That does not justify reworking the handler contract from
+discrete chunks to a token stream.
+
 ## Considered and not done: LLM prefetch on a stable ASR partial
 
 Starting the completion from the last partial while the caller is still speaking
