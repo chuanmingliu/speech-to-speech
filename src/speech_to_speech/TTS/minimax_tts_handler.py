@@ -25,6 +25,7 @@ from speech_to_speech.pipeline.messages import AUDIO_RESPONSE_DONE, EndOfRespons
 from speech_to_speech.pipeline.speculative_turns import SpeculativeTurnTracker
 from speech_to_speech.TTS.minimax_websocket import (
     DEFAULT_OPEN_TIMEOUT_S,
+    MiniMaxProviderError,
     MiniMaxWebSocketSession,
 )
 
@@ -36,6 +37,9 @@ _DEFAULT_KEEPALIVE_S = 300.0
 _WARMUP_TIMEOUT_S = 5.0
 _CONNECTION_PROBE_INTERVAL_S = 30.0
 _WEBSOCKET_MAX_IDLE_S = 90.0
+# A failed turn is already producing no audio; do not also block the handler
+# thread for long probing whether the session survived.
+_FAILED_SESSION_PROBE_S = 0.25
 _DEFAULT_MODEL_WARMUP_TEXT = "Hi."
 
 
@@ -522,6 +526,30 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         self._last_connection_use_s = perf_counter()
         return session
 
+    def _release_failed_session_locked(self, exc: Exception) -> None:
+        """Decide whether a failed synthesis costs us the warm session.
+
+        A provider rejection -- a rate limit above all -- says nothing about the
+        socket: the connection is healthy and the task is very likely still
+        usable. Closing it anyway means the next turn pays a fresh connect and
+        task_start handshake, which is exactly the cold-start cost this profile
+        works to avoid, and it bites hardest under sustained rate limiting when
+        every turn would then pay it.
+
+        task_cancel doubles as a liveness probe: a server that answers
+        task_canceled has demonstrably kept the task, so the session is kept.
+        Anything else falls back to closing.
+        """
+        if isinstance(exc, MiniMaxProviderError):
+            session = self._websocket_session
+            if session is not None and session.cancel(timeout_s=_FAILED_SESSION_PROBE_S):
+                logger.info(
+                    "MiniMax TTS rejected the request (status_code=%s); session kept warm",
+                    getattr(exc, "status_code", "unknown"),
+                )
+                return
+        self._close_websocket_session_locked()
+
     def _abort_websocket_session_locked(self) -> None:
         """End the current synthesis on a barge-in, keeping the socket if we can.
 
@@ -675,7 +703,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
                     self._last_model_use_s = self._last_connection_use_s
                     return
                 except Exception as exc:
-                    self._close_websocket_session_locked()
+                    self._release_failed_session_locked(exc)
                     if emitted_audio or attempt or not self._retryable_websocket_error(exc):
                         raise
                     logger.info("MiniMax TTS WebSocket was stale; reconnecting once")

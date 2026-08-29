@@ -1300,3 +1300,68 @@ def test_bidi_cancel_drains_in_flight_audio_before_acknowledging():
     session.start()
 
     assert session.cancel() is True
+
+
+# ── Provider rejections must not cost the warm session ───────────────────────
+
+
+def _rate_limited(event="task_continued"):
+    return {"event": event, "base_resp": {"status_code": 1002, "status_msg": "rate limit exceeded(RPM)"}}
+
+
+def test_rate_limit_raises_a_provider_error_not_a_bare_runtime_error():
+    from speech_to_speech.TTS.minimax_websocket import MiniMaxProviderError, MiniMaxWebSocketSession
+
+    websocket = FakeWebSocket(_ws_messages(_rate_limited()))
+    session = MiniMaxWebSocketSession(
+        endpoint=_BIDI_ENDPOINT, api_key="k", task_start={"event": "task_start"}, connect=websocket.connect
+    )
+    session.start()
+
+    with pytest.raises(MiniMaxProviderError) as excinfo:
+        list(session.synthesize("好的，"))
+    assert excinfo.value.status_code == 1002
+
+
+def test_rate_limit_keeps_the_websocket_session_warm(monkeypatch):
+    """A 1002 says nothing about the socket.
+
+    Tearing it down would make the next turn pay a fresh connect and task_start
+    handshake -- the exact cold start this profile exists to avoid, and worst
+    precisely when rate limiting is sustained.
+    """
+    websocket = FakeWebSocket(_ws_messages(_rate_limited(), _bidi_frame("task_canceled")))
+    handler = _bidi_handler(websocket=websocket)
+    monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *a, **k: None)
+
+    with pytest.raises(Exception):
+        list(handler.process(TTSInput(text="好的，", language_code="zh")))
+
+    assert websocket.closed is False, "the socket must survive a rate-limit rejection"
+    assert handler._websocket_session is not None
+    assert {"event": "task_cancel"} in websocket.sent
+
+
+def test_session_is_dropped_when_the_cancel_probe_fails(monkeypatch):
+    """If the server will not confirm the task survived, fall back to closing."""
+    websocket = FakeWebSocket(_ws_messages(_rate_limited()))  # no task_canceled follows
+    handler = _bidi_handler(websocket=websocket)
+    monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *a, **k: None)
+
+    with pytest.raises(Exception):
+        list(handler.process(TTSInput(text="好的，", language_code="zh")))
+
+    assert websocket.closed is True
+    assert handler._websocket_session is None
+
+
+def test_transport_failure_still_drops_the_session(monkeypatch):
+    """Only application-level rejections are recoverable; a dead socket is not."""
+    websocket = FakeWebSocket(_ws_messages(ConnectionError("socket died")))
+    handler = _bidi_handler(websocket=websocket)
+    monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *a, **k: None)
+
+    with pytest.raises(Exception):
+        list(handler.process(TTSInput(text="好的，", language_code="zh")))
+
+    assert handler._websocket_session is None

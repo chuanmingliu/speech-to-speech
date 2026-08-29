@@ -22,6 +22,19 @@ DEFAULT_CANCEL_TIMEOUT_S = 1.0
 _BIDI_PROGRESS_EVENTS = frozenset({"sentence_start", "sentence_end", "task_continued"})
 
 
+class MiniMaxProviderError(RuntimeError):
+    """The provider rejected a request at the application layer.
+
+    Distinct from a transport failure: the socket is healthy and the task may
+    still be usable, so the caller can decide whether the warm session is worth
+    keeping. A rate-limit rejection (status_code 1002) is the common case.
+    """
+
+    def __init__(self, message: str, *, status_code: object = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 def is_bidi_endpoint(endpoint: str) -> bool:
     """Whether ``endpoint`` addresses the bidirectional T2A protocol."""
     return urlsplit(endpoint).path.rstrip("/").endswith("_bidi")
@@ -115,6 +128,8 @@ class MiniMaxWebSocketSession:
             self._raise_if_failed(message)
             event = message.get("event")
             if event == "task_failed":
+                # A failed task cannot be reused, so this is not recoverable
+                # the way a plain application rejection is.
                 raise RuntimeError("MiniMax TTS WebSocket task failed.")
 
             data = message.get("data") or {}
@@ -138,7 +153,7 @@ class MiniMaxWebSocketSession:
             if message.get("is_final") is True:
                 return
 
-    def cancel(self) -> bool:
+    def cancel(self, timeout_s: float | None = None) -> bool:
         """Discard buffered text, keeping the session open.
 
         Returns ``True`` when the session survived and can synthesise again.
@@ -149,7 +164,7 @@ class MiniMaxWebSocketSession:
             return False
         try:
             self._send({"event": "task_cancel"})
-            deadline = time.monotonic() + self.cancel_timeout_s
+            deadline = time.monotonic() + (self.cancel_timeout_s if timeout_s is None else timeout_s)
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -220,7 +235,8 @@ class MiniMaxWebSocketSession:
         base_response = message.get("base_resp") or {}
         status_code = base_response.get("status_code")
         if status_code not in (None, 0):
-            raise RuntimeError(
+            raise MiniMaxProviderError(
                 "MiniMax TTS request failed "
-                f"(status_code={status_code!r}): {base_response.get('status_msg', 'unknown error')}"
+                f"(status_code={status_code!r}): {base_response.get('status_msg', 'unknown error')}",
+                status_code=status_code,
             )
