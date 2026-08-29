@@ -1041,6 +1041,7 @@ def get_tts_handler(
             setup_args=(should_listen,),
             setup_kwargs={
                 "speed": minimax_tts_handler_kwargs.minimax_tts_speed,
+                "prime_texts": minimax_tts_handler_kwargs.minimax_tts_prime_texts,
                 "cancel_scope": cancel_scope,
                 "speculative_turns": speculative_turns,
             },

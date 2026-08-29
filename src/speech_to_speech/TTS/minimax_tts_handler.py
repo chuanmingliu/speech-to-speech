@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
 import unicodedata
 import wave
 from collections import OrderedDict
@@ -66,6 +67,19 @@ def _has_speakable_content(text: str) -> bool:
         if category.startswith(("L", "N")):
             return True
     return False
+
+
+def _parse_prime_texts(value: str | list[str] | None) -> tuple[str, ...]:
+    """Normalise the prime list from a config list or a delimited env string."""
+    if not value:
+        return ()
+    items = value if isinstance(value, list) else re.split(r"[\n|]", value)
+    seen: dict[str, None] = {}
+    for item in items:
+        text = str(item).strip()
+        if text:
+            seen.setdefault(text, None)
+    return tuple(seen)
 
 
 def _http_endpoint(endpoint: str) -> str:
@@ -157,6 +171,7 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
         warmup_connection: bool | None = None,
         warmup_model: bool | None = None,
         model_warmup_text: str | None = None,
+        prime_texts: str | list[str] | None = None,
         cache_max_mb: float | None = None,
     ) -> None:
         self.should_listen = should_listen
@@ -193,6 +208,9 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             else os.getenv("MINIMAX_TTS_MODEL_WARMUP_TEXT", _DEFAULT_MODEL_WARMUP_TEXT)
         )
         self.model_warmup_text = configured_warmup_text.strip() or _DEFAULT_MODEL_WARMUP_TEXT
+        self.prime_texts = _parse_prime_texts(
+            prime_texts if prime_texts is not None else os.getenv("MINIMAX_TTS_PRIME_TEXTS", "")
+        )
 
         if not self.api_key:
             raise ValueError("MiniMax TTS requires MINIMAX_TTS_API_KEY.")
@@ -268,6 +286,8 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             self._warmup_model()
         elif should_warm:
             self._warmup_connection()
+        # Priming needs a live connection, so it follows warmup.
+        self._prime_cache()
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -333,6 +353,67 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             logger.info("MiniMax TTS model warmed in %.3fs", self._last_model_use_s - started_at_s)
         except Exception as exc:
             logger.warning("MiniMax TTS model warmup failed; continuing without it: %s", exc)
+
+    def _prime_cache(self) -> None:
+        """Pre-synthesise stock opening clauses into the exact-text cache.
+
+        The clause-early first flush sends a reply's opening clause to TTS as its
+        own request, so on a telephony call the very first thing the caller hears
+        is almost always one of a handful of short acknowledgements. Synthesising
+        those once at startup turns that request into a cache hit and takes the
+        provider's first-byte time (~200ms on the measured profile) off the front
+        of every turn that opens with one.
+
+        Each entry costs one billable synthesis at startup, so the list is empty
+        by default. Entries must match the flushed chunk exactly, punctuation
+        included ("好的，", not "好的").
+        """
+        if not self.prime_texts:
+            return
+        started_at_s = perf_counter()
+        primed = 0
+        for text in self.prime_texts:
+            key = self._cache_key(text)
+            if self._cache_get(key) is not None:
+                continue
+            try:
+                if self.stream:
+                    chunks = [
+                        self._chunk_bytes(chunk) for chunk in self._iter_websocket_pcm(text, generation=None)
+                    ]
+                else:
+                    response = self.client.post(
+                        self.endpoint,
+                        headers=self._headers(),
+                        json=self._payload(text),
+                        timeout=_WARMUP_TIMEOUT_S,
+                    )
+                    response.raise_for_status()
+                    body = response.json()
+                    self._raise_if_failed(body)
+                    data = body.get("data") or {}
+                    if not data.get("audio"):
+                        continue
+                    chunks = [
+                        self._chunk_bytes(chunk)
+                        for chunk in self._emit_pcm(self._decode_wav(data["audio"]), None, pad=True)
+                    ]
+            except Exception as exc:
+                # A prime failure only costs the speed-up, never the turn.
+                logger.warning("MiniMax TTS cache priming failed for %r; continuing: %s", text, exc)
+                continue
+            if chunks:
+                self._cache_put(key, chunks)
+                primed += 1
+        if primed:
+            self._last_connection_use_s = perf_counter()
+            self._last_model_use_s = self._last_connection_use_s
+            logger.info(
+                "MiniMax TTS primed %d/%d opening clauses in %.3fs",
+                primed,
+                len(self.prime_texts),
+                perf_counter() - started_at_s,
+            )
 
     def prewarm(self) -> None:
         """Refresh idle MiniMax connectivity/model state before a spoken turn."""

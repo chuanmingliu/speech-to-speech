@@ -97,6 +97,42 @@ link — the retry is slow too and the real gain is smaller. And the fitted
 lognormal reaches p99 9.4 s against a measured 11.8 s, so it slightly
 understates the extreme tail.
 
+## `minimax_tts_prime_texts` (empty by default)
+
+The clause-early flush sends a reply's opening clause to TTS as its own request,
+so on a telephony call the first thing the caller hears is almost always one of a
+handful of acknowledgements. Pre-synthesising those at startup puts them in the
+exact-text cache, turning that request into a hit and removing MiniMax's
+first-byte time (~205 ms) from the front of the turn.
+
+Entries are pipe-separated and must match the flushed chunk exactly, punctuation
+included — `好的，`, not `好的`. Each costs one billable synthesis at startup,
+once per process, so the list is empty unless configured. A prime failure is
+logged and skipped; it can cost the speed-up but never the turn.
+
+Stacked with the clause flush on the Chinese cases (speech stop to first audio):
+
+| case | feat_0824 | + clause flush | + priming |
+| --- | --- | --- | --- |
+| zh-weather | 905 ms | 730 ms | **527 ms** |
+| zh-booking | 1030 ms | 730 ms | **527 ms** |
+| zh-terse | 605 ms | 605 ms | **402 ms** |
+| median | 867 ms | 730 ms | **527 ms** |
+
+This only pays when the model actually opens with a primed clause. The
+`MiniMax TTS cache hit` log line on a turn's first chunk is what tells you the
+real hit rate on live traffic; nothing here measures that.
+
+## Considered and not done: LLM prefetch on a stable ASR partial
+
+Starting the completion from the last partial while the caller is still speaking
+would overlap provider TTFT with the tail of the utterance. It is not
+implemented, because `min_silence_ms` is already 64 ms with speculative reopen:
+the last partial lands only ~180 ms before the final transcript, so that is the
+entire head start available, and buying it costs a duplicate LLM request on
+*every* turn against hedging's ~21% for a far larger tail win. It becomes
+attractive if `min_silence_ms` is raised.
+
 ## Re-measuring
 
 Offline, with no API keys and no provider traffic. Two harnesses at different

@@ -182,6 +182,7 @@ def _minimax_handler(
     warmup_connection=None,
     warmup_model=None,
     model_warmup_text=None,
+    prime_texts=None,
     cache_max_mb=None,
 ):
     websocket = websocket or FakeWebSocket()
@@ -202,6 +203,7 @@ def _minimax_handler(
             "websocket_connect": websocket.connect,
             "cancel_scope": cancel_scope,
             "stream": stream,
+            "prime_texts": prime_texts,
             "warmup_connection": warmup_connection,
             "warmup_model": warmup_model,
             "model_warmup_text": model_warmup_text,
@@ -702,6 +704,66 @@ def test_minimax_tts_warmup_primes_model_and_exact_audio_cache(monkeypatch):
     assert [message["event"] for message in websocket.sent] == ["task_start", "task_continue"]
 
 
+def test_minimax_tts_primes_opening_clauses_into_the_cache(monkeypatch):
+    """A primed opener is served from cache, so the caller never waits on MiniMax."""
+    samples = np.arange(48, dtype=np.int16)
+    websocket = FakeWebSocket(_ws_messages(_ws_event(samples), _ws_event(samples)))
+    handler = _minimax_handler(
+        FakeHTTPClient(),
+        websocket=websocket,
+        warmup_connection=False,
+        warmup_model=False,
+        prime_texts="好的，|没问题，",
+        cache_max_mb=1,
+    )
+    monkeypatch.setattr("speech_to_speech.TTS.minimax_tts_handler.console.print", lambda *a, **k: None)
+
+    # Both openers were synthesised once, at startup.
+    assert [m.get("text") for m in websocket.sent if m["event"] == "task_continue"] == ["好的，", "没问题，"]
+    sent_before = len(websocket.sent)
+
+    played = list(handler.process(TTSInput(text="好的，", language_code="zh")))
+
+    assert b"".join(played) == samples.tobytes()
+    assert len(websocket.sent) == sent_before, "a primed opener must not hit the provider again"
+
+
+def test_minimax_tts_priming_is_off_by_default():
+    handler = _minimax_handler(FakeHTTPClient(), websocket=FakeWebSocket(_ws_messages()),
+                               warmup_connection=False, warmup_model=False)
+    assert handler.prime_texts == ()
+
+
+def test_minimax_tts_prime_list_parsing_dedupes_and_trims():
+    from speech_to_speech.TTS.minimax_tts_handler import _parse_prime_texts
+
+    assert _parse_prime_texts(" 好的， | 没问题， |好的， |  ") == ("好的，", "没问题，")
+    assert _parse_prime_texts(["Sure,", "Sure,", ""]) == ("Sure,",)
+    assert _parse_prime_texts(None) == ()
+    assert _parse_prime_texts("") == ()
+
+
+def test_minimax_tts_priming_failure_does_not_break_the_handler(monkeypatch):
+    """A prime failure may cost the speed-up, never the turn."""
+
+    class _Exploding(FakeWebSocket):
+        def send(self, payload):
+            message = json.loads(payload) if isinstance(payload, str) else payload
+            if message.get("event") == "task_continue":
+                raise RuntimeError("provider refused")
+            return super().send(payload)
+
+    handler = _minimax_handler(
+        FakeHTTPClient(),
+        websocket=_Exploding(_ws_messages()),
+        warmup_connection=False,
+        warmup_model=False,
+        prime_texts="好的，",
+        cache_max_mb=1,
+    )
+    assert handler.prime_texts == ("好的，",)
+
+
 def test_minimax_tts_reuses_exact_audio_from_memory_cache(monkeypatch):
     samples = np.arange(700, dtype=np.int16)
     websocket = FakeWebSocket(_ws_messages(_ws_event(samples)))
@@ -1029,9 +1091,10 @@ def test_get_stt_handler_builds_tencent_adapter(monkeypatch):
 def test_get_tts_handler_builds_minimax_adapter_with_runtime_guards(monkeypatch):
     recorded = {}
 
-    def fake_setup(self, should_listen, speed=None, cancel_scope=None, speculative_turns=None):
+    def fake_setup(self, should_listen, speed=None, prime_texts=None, cancel_scope=None, speculative_turns=None):
         recorded["should_listen"] = should_listen
         recorded["speed"] = speed
+        recorded["prime_texts"] = prime_texts
         recorded["cancel_scope"] = cancel_scope
         recorded["speculative_turns"] = speculative_turns
 
@@ -1051,7 +1114,7 @@ def test_get_tts_handler_builds_minimax_adapter_with_runtime_guards(monkeypatch)
         PocketTTSHandlerArguments(),
         KokoroTTSHandlerArguments(),
         Qwen3TTSHandlerArguments(),
-        MiniMaxTTSHandlerArguments(minimax_tts_speed=1.25),
+        MiniMaxTTSHandlerArguments(minimax_tts_speed=1.25, minimax_tts_prime_texts="好的，|Sure,"),
         cancel_scope=cancel_scope,
         speculative_turns=speculative_turns,
     )
@@ -1060,6 +1123,7 @@ def test_get_tts_handler_builds_minimax_adapter_with_runtime_guards(monkeypatch)
     assert recorded == {
         "should_listen": should_listen,
         "speed": 1.25,
+        "prime_texts": "好的，|Sure,",
         "cancel_scope": cancel_scope,
         "speculative_turns": speculative_turns,
     }
