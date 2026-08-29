@@ -99,6 +99,8 @@ def _make_handler(*, disable_thinking=False, stream=True, cancel_scope=None):
     handler.model_name = "test-model"
     handler.stream = stream
     handler.stream_batch_sentences = 1
+    handler.stream_first_chunk_lookahead_chars = 0
+    handler.request_hedge_after_s = 0.0
     handler.gen_kwargs = {}
     handler.request_timeout_s = 20.0
     handler.request_timeout = 20.0

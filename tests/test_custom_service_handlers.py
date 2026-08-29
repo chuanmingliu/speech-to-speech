@@ -999,7 +999,9 @@ def test_custom_service_json_profile_selects_all_three_providers():
     assert args.responses_api_language_model_handler_kwargs.chat_size == 8
     assert args.responses_api_language_model_handler_kwargs.compact_history is False
     assert args.responses_api_language_model_handler_kwargs.stream_batch_sentences == 1
-    assert args.minimax_tts_handler_kwargs.minimax_tts_speed == 1.1
+    assert args.responses_api_language_model_handler_kwargs.stream_first_chunk_lookahead_chars == 8
+    assert args.responses_api_language_model_handler_kwargs.request_hedge_after_ms == 1200
+    assert args.minimax_tts_handler_kwargs.minimax_tts_speed == 1.2
     assert args.vad_handler_kwargs.speculative_reopen_ms == 250
     assert args.vad_handler_kwargs.speech_pad_ms == 80
 

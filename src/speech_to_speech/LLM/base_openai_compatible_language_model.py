@@ -4,7 +4,8 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
-from threading import Lock
+from queue import Empty, Queue
+from threading import Lock, Thread
 from time import perf_counter
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -32,7 +33,12 @@ from speech_to_speech.LLM.chat import (
 )
 from speech_to_speech.LLM.compaction_prompt import CompactGenerateFn, build_compactor
 from speech_to_speech.LLM.text_prompt import build_text_system_prompt
-from speech_to_speech.LLM.utils import remove_unspeechable, resolve_auto_language, split_spoken_units
+from speech_to_speech.LLM.utils import (
+    remove_unspeechable,
+    resolve_auto_language,
+    split_first_spoken_unit,
+    split_spoken_units,
+)
 from speech_to_speech.LLM.voice_prompt import build_voice_system_prompt
 from speech_to_speech.pipeline.cancel_scope import CancelScope
 from speech_to_speech.pipeline.handler_types import LLMIn, LLMOut
@@ -51,6 +57,13 @@ WARMUP_MAX_RETRIES = 6
 DEFAULT_CONNECTION_KEEPALIVE_S = 300.0
 CONNECTION_PROBE_INTERVAL_S = 30.0
 DEFAULT_PREWARM_WAIT_S = 0.5
+# How much text must be buffered past the opening clause before it is sent
+# to TTS on its own. Enough lookahead means the follow-up chunk is already
+# being written, so the early flush cannot open a gap in playback.
+DEFAULT_FIRST_CHUNK_LOOKAHEAD_CHARS = 8
+# Hedging is opt-in: a hedge is a second billable completion, and it only
+# pays for itself on backends whose first-token latency has a long tail.
+DEFAULT_HEDGE_AFTER_MS = 0.0
 
 
 # ── Normalised provider events ────────────────────────────────────────────────
@@ -86,6 +99,17 @@ class Usage(BaseModel):
 
 
 ProviderEvent = TextDelta | AssistantMessage | ToolCall | Usage
+
+# (attempt index, api response, event iterator, first event, error)
+_HedgeResult = tuple[int, Any, Optional[Iterator[ProviderEvent]], Optional[ProviderEvent], Optional[BaseException]]
+
+
+def _prepend_event(first: ProviderEvent | None, events: Iterator[ProviderEvent] | None) -> Iterator[ProviderEvent]:
+    """Re-attach the event a racing attempt already pulled off the stream."""
+    if first is not None:
+        yield first
+    if events is not None:
+        yield from events
 
 
 class _Turn(BaseModel):
@@ -146,6 +170,8 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
         supports_images: Optional[bool] = None,
         request_timeout_s: float = 20.0,
         stream_batch_sentences: int = 3,
+        stream_first_chunk_lookahead_chars: int = DEFAULT_FIRST_CHUNK_LOOKAHEAD_CHARS,
+        request_hedge_after_ms: float = DEFAULT_HEDGE_AFTER_MS,
         enable_lang_prompt: bool = False,
         compact_history: bool = False,
         http_client: httpx.Client | None = None,
@@ -156,6 +182,8 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
         self.model_name = model_name
         self.stream = stream
         self.stream_batch_sentences = max(1, stream_batch_sentences)
+        self.stream_first_chunk_lookahead_chars = max(0, int(stream_first_chunk_lookahead_chars))
+        self.request_hedge_after_s = max(0.0, float(request_hedge_after_ms)) / 1000.0
         self.enable_lang_prompt = enable_lang_prompt
         self.gen_kwargs = dict(gen_kwargs)
         self.request_timeout_s = float(request_timeout_s)
@@ -459,6 +487,139 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
             chat.add_item(fc_item)
         yield self._chunk(turn, tools=[item])
 
+    # ── hedged requests ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def _close_api_response(api_response: Any) -> None:
+        close = getattr(api_response, "close", None)
+        if not callable(close):
+            return
+        try:
+            close()
+        except Exception:
+            logger.debug("Closing a hedged LLM response failed", exc_info=True)
+
+    def _reap_hedge_losers(self, results: "Queue[_HedgeResult]", outstanding: int) -> None:
+        """Drain and close the attempts that lost the race, off the hot path.
+
+        A losing attempt is still blocked inside ``next(events)`` waiting on the
+        provider, so it cannot be closed synchronously without re-introducing
+        the very latency the hedge removed.
+        """
+        if outstanding <= 0:
+            return
+
+        def reap() -> None:
+            for _ in range(outstanding):
+                try:
+                    result = results.get(timeout=self.request_timeout_s + 5.0)
+                except Empty:
+                    return
+                self._close_api_response(result[1])
+
+        Thread(target=reap, name="llm-hedge-reaper", daemon=True).start()
+
+    def _request_hedged(
+        self,
+        api_input: Any,
+        optional_kwargs: dict[str, Any],
+        turn: _Turn,
+    ) -> tuple[Any, Iterator[ProviderEvent]]:
+        """Race up to two identical completions and return the first to speak.
+
+        Time-to-first-token on a hosted provider has a much heavier tail than
+        median (a cold route, a slow node, an SDK retry). Waiting it out puts
+        seconds of silence in front of the reply, so once ``request_hedge_after_s``
+        has passed with no first event a second request is issued and whichever
+        produces a token first is consumed. Completions have no server-side
+        side effects, so the loser is simply closed.
+        """
+        results: Queue[_HedgeResult] = Queue()
+
+        def attempt(index: int) -> None:
+            api_response: Any = None
+            try:
+                api_response = self._request(api_input, optional_kwargs)
+                events = self._iter_events(api_response)
+                first = next(events, None)
+                results.put((index, api_response, events, first, None))
+            except BaseException as exc:  # noqa: BLE001 - relayed to the caller thread
+                results.put((index, api_response, None, None, exc))
+
+        def spawn(index: int) -> None:
+            Thread(target=attempt, args=(index,), name=f"llm-hedge-{index}", daemon=True).start()
+
+        started_at_s = perf_counter()
+        deadline_s = started_at_s + self.request_timeout_s
+        spawn(0)
+        outstanding = 1
+        hedged = False
+        errors: list[BaseException] = []
+
+        while outstanding > 0:
+            timeout_s = self.request_hedge_after_s if not hedged else max(0.0, deadline_s - perf_counter())
+            try:
+                index, api_response, events, first, exc = results.get(timeout=timeout_s)
+            except Empty:
+                if hedged:
+                    break
+                hedged = True
+                outstanding += 1
+                logger.info(
+                    "Hedging LLM request after %.0fms (turn=%s rev=%s)",
+                    self.request_hedge_after_s * 1000,
+                    turn.turn_id,
+                    turn.turn_revision,
+                )
+                spawn(1)
+                continue
+
+            outstanding -= 1
+            if exc is not None:
+                errors.append(exc)
+                self._close_api_response(api_response)
+                if not hedged:
+                    # The primary failed before the hedge timer elapsed; retry
+                    # now rather than surfacing the error to the caller.
+                    hedged = True
+                    outstanding += 1
+                    logger.info(
+                        "Retrying failed LLM request (turn=%s rev=%s): %s",
+                        turn.turn_id,
+                        turn.turn_revision,
+                        exc,
+                    )
+                    spawn(1)
+                continue
+
+            if hedged:
+                logger.info(
+                    "Hedged LLM request attempt %d won in %.3fs (turn=%s rev=%s)",
+                    index,
+                    perf_counter() - started_at_s,
+                    turn.turn_id,
+                    turn.turn_revision,
+                )
+            self._reap_hedge_losers(results, outstanding)
+            return api_response, _prepend_event(first, events)
+
+        if errors:
+            raise errors[0]
+        raise TimeoutError(
+            f"No LLM response within {self.request_timeout_s:.1f}s (turn={turn.turn_id} rev={turn.turn_revision})."
+        )
+
+    def _open_stream(
+        self,
+        api_input: Any,
+        optional_kwargs: dict[str, Any],
+        turn: _Turn,
+    ) -> tuple[Any, Iterator[ProviderEvent]]:
+        if self.request_hedge_after_s > 0:
+            return self._request_hedged(api_input, optional_kwargs, turn)
+        api_response = self._request(api_input, optional_kwargs)
+        return api_response, self._iter_events(api_response)
+
     # ── consumption ─────────────────────────────────────────────────────────--
 
     def _consume_streaming(
@@ -472,6 +633,7 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
         printable_text = ""
         sentence_batch: list[str] = []
         first_flush_done = False
+        early_flush_done = False
         first_token_logged = False
 
         def _flush(batch: list[str]) -> Iterator[LLMOut]:
@@ -480,7 +642,11 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
             if not self._turn_output_allowed(turn.turn_id, turn.turn_revision):
                 logger.info("LLM generation cancelled (stale speculative turn)")
                 return
-            flushed = " ".join(batch)
+            # Sentences keep the whitespace that separated them from the
+            # previous flush; normalise it so a chunk never opens with a space.
+            flushed = " ".join(piece for piece in (part.strip() for part in batch) if piece)
+            if not flushed:
+                return
             logger.info(
                 "Streaming LLM sentence (turn=%s rev=%s): %s",
                 turn.turn_id,
@@ -554,6 +720,26 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
                 new_text = remove_unspeechable(event.text)
                 state.clean_text += new_text
                 printable_text += new_text
+                if (
+                    not early_flush_done
+                    and not first_flush_done
+                    and not sentence_batch
+                    and self.stream_first_chunk_lookahead_chars > 0
+                ):
+                    # Speak the opening clause without waiting for the sentence
+                    # to terminate: the remaining tokens of that sentence are
+                    # then generated while the listener is already hearing it.
+                    head, printable_text = split_first_spoken_unit(
+                        printable_text,
+                        self.stream_first_chunk_lookahead_chars,
+                    )
+                    if head:
+                        if not self._turn_output_allowed(turn.turn_id, turn.turn_revision):
+                            logger.info("LLM generation cancelled (stale speculative turn)")
+                            cancelled = True
+                            break
+                        early_flush_done = True
+                        yield from _flush([head.strip()])
                 complete, printable_text = split_spoken_units(printable_text)
                 for sentence in complete:
                     sentence_batch.append(sentence)
@@ -625,6 +811,7 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
         optional_kwargs: dict[str, Any],
     ) -> Iterator[LLMOut]:
         api_response: Any = None
+        events: Iterator[ProviderEvent] = iter(())
         state = _GenState()
         error_message: str | None = None
         api_input = self._serialize(active_chat)
@@ -648,10 +835,9 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
                     self.stream,
                 )
                 self._wait_for_connection_prewarm()
-                api_response = self._request(api_input, optional_kwargs)
+                api_response, events = self._open_stream(api_input, optional_kwargs, turn)
                 self._last_connection_use_s = perf_counter()
             if api_response is not None:
-                events = self._iter_events(api_response)
                 if self.stream:
                     yield from self._consume_streaming(events, state, turn, request_started_at_s)
                 else:

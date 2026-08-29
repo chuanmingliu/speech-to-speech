@@ -55,6 +55,62 @@ def split_spoken_sentences(text: str) -> list[str]:
     return sentences
 
 
+# Clause punctuation is not a sentence boundary, but it *is* a safe place to
+# hand a prefix to the TTS engine. Waiting for a full sentence before the first
+# synthesis request costs the whole "…, " prefix in tokens, which is dead time
+# on the end-to-end path: the listener hears nothing while the model is still
+# writing a clause the engine could already be speaking.
+_CLAUSE_BREAK_CHARS = frozenset(",;:，、；：")
+_SPOKEN_BREAK_CHARS = _CLAUSE_BREAK_CHARS | _SENTENCE_END_CHARS
+# A one-character opening unit ("，") carries no speech; never flush one.
+_MIN_FIRST_UNIT_CHARS = 2
+
+
+def _is_spoken_break(text: str, index: int) -> bool:
+    """Whether ``text[index]`` ends a clause that is safe to speak on its own."""
+    char = text[index]
+    if char not in _SPOKEN_BREAK_CHARS:
+        return False
+    previous = text[index - 1] if index else ""
+    following = text[index + 1] if index + 1 < len(text) else ""
+    # "1,000", "3.14", "12:30" — punctuation inside a number is not a pause. A
+    # digit directly before an unterminated buffer tail is treated the same way,
+    # because the next token may well continue the number.
+    if previous.isdigit() and (following.isdigit() or not following):
+        return False
+    # ASCII punctuation only separates clauses when whitespace follows it, so
+    # "e.g." and "gpt-5.4-mini" stay intact. A break at the very end of the
+    # buffer is genuine: the model emitted the punctuation and nothing after it.
+    if char.isascii() and following and not following.isspace():
+        return False
+    return True
+
+
+def split_first_spoken_unit(text: str, lookahead_chars: int) -> tuple[str, str]:
+    """Return ``(first_unit, remainder)`` for the opening clause of a reply.
+
+    Unlike :func:`split_spoken_units` this breaks on clause punctuation too, so
+    the first TTS request goes out before the sentence is finished. The split
+    only happens once ``lookahead_chars`` characters are buffered: that is what
+    makes releasing a short opening clause safe, because text past the break is
+    already in hand and the follow-up chunk will not leave a gap in playback.
+    Note this bounds the *buffer*, not the returned prefix -- gating on prefix
+    length instead would skip the early comma that makes this worth doing.
+
+    ``("", text)`` means nothing is ready yet and the caller should keep
+    buffering.
+    """
+    if lookahead_chars <= 0 or len(text.strip()) < lookahead_chars:
+        return "", text
+    for index in range(len(text)):
+        if not _is_spoken_break(text, index):
+            continue
+        head = text[: index + 1]
+        if len(head.strip()) >= _MIN_FIRST_UNIT_CHARS:
+            return head, text[index + 1 :]
+    return "", text
+
+
 def split_spoken_units(text: str) -> tuple[list[str], str]:
     """Return ``(complete_sentences, remainder)``.
 

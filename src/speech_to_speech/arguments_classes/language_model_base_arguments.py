@@ -30,6 +30,23 @@ class LanguageModelBaseArguments:
             "Set to 1 for sentence-by-sentence streaming. Default is 3."
         },
     )
+    stream_first_chunk_lookahead_chars: int = field(
+        default=8,
+        metadata={
+            "help": "Buffer this many characters past the reply's opening clause, then flush that clause to TTS on a "
+            "clause boundary (',' ';' ':' and their CJK forms) instead of waiting for the sentence to terminate. "
+            "Synthesis then starts while the model is still writing the first sentence, which is the largest single "
+            "component of speech-stop-to-first-audio. Set to 0 to keep the sentence-only behaviour. Default is 8."
+        },
+    )
+    request_hedge_after_ms: float = field(
+        default=0.0,
+        metadata={
+            "help": "When greater than zero, issue a second identical completion if the first has produced no token "
+            "within this many milliseconds, and stream whichever answers first. Trades a duplicate request on the "
+            "slow tail of turns for a much shorter p95/p99 time-to-first-audio. Set to 0 to disable. Default is 0."
+        },
+    )
     enable_lang_prompt: bool = field(
         default=False,
         metadata={
