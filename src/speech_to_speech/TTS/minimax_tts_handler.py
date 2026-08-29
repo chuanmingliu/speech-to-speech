@@ -21,6 +21,7 @@ from websockets.exceptions import ConnectionClosed
 from speech_to_speech.baseHandler import BaseHandler
 from speech_to_speech.pipeline.cancel_scope import CancelScope
 from speech_to_speech.pipeline.handler_types import TTSIn, TTSOut
+from speech_to_speech.pipeline.log_context import tel_log
 from speech_to_speech.pipeline.messages import AUDIO_RESPONSE_DONE, EndOfResponse, TTSInput
 from speech_to_speech.pipeline.speculative_turns import SpeculativeTurnTracker
 from speech_to_speech.TTS.minimax_websocket import (
@@ -729,6 +730,14 @@ class MiniMaxTTSHandler(BaseHandler[TTSIn, TTSOut]):
             request_s,
             tts_input.turn_id,
             tts_input.turn_revision,
+        )
+        tel_log(
+            "tts",
+            "first_audio",
+            t0=tts_input.speech_stopped_at_s or started_at_s,
+            turn=tts_input.turn_id or "",
+            hop="tts",
+            hop_ms=int(request_s * 1000),
         )
         if tts_input.speech_stopped_at_s is None:
             return

@@ -19,13 +19,43 @@ from typing import TYPE_CHECKING, Any
 from fastapi import WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
+from speech_to_speech.pipeline.log_context import tel_log
+
 if TYPE_CHECKING:
     from speech_to_speech.api.openai_realtime.service import RealtimeService, ServerEvent
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    "SessionTransport",
+    "WebSocketTransport",
+    "log_realtime_event",
+    "send_ws_event",
+    "tel_log",
+]
+
 _SKIP_CLIENT_TYPES = {"input_audio_buffer.append"}
-_AUDIO_DELTA = "response.output_audio.delta"
+_AUDIO_DELTA_TYPES = {"response.output_audio.delta", "response.audio.delta"}
+# rustpbx Active Call only plays the older Realtime names.
+_ACTIVE_CALL_WS_TYPES = {
+    "response.output_audio.delta": "response.audio.delta",
+    "response.output_audio.done": "response.audio.done",
+    "response.output_audio_transcript.delta": "response.audio_transcript.delta",
+    "response.output_audio_transcript.done": "response.audio_transcript.done",
+}
+
+
+def _ws_payload(event: Any) -> dict[str, Any]:
+    if isinstance(event, dict):
+        payload = dict(event)
+    elif hasattr(event, "model_dump"):
+        payload = event.model_dump()
+    else:
+        payload = {"type": getattr(event, "type", None)}
+    mapped = _ACTIVE_CALL_WS_TYPES.get(str(payload.get("type") or ""))
+    if mapped:
+        payload = {**payload, "type": mapped}
+    return payload
 
 
 def _preview(value: Any, limit: int = 80) -> str:
@@ -42,12 +72,11 @@ def log_realtime_event(direction: str, event: Any) -> None:
         event_type = event.get("type")
     if event_type in _SKIP_CLIENT_TYPES:
         return
-    if event_type == _AUDIO_DELTA:
+    if event_type in _AUDIO_DELTA_TYPES or str(event_type).endswith("audio.delta"):
         index = getattr(event, "content_index", None) if payload is None else payload.get("content_index")
         if index not in (None, 0):
             return
-        response_id = getattr(event, "response_id", None) if payload is None else payload.get("response_id")
-        logger.info("Realtime %s %s (first audio chunk, response=%s)", direction, event_type, response_id)
+        logger.info("Realtime %s %s", direction, event_type)
         return
     if payload is None:
         payload = event.model_dump() if hasattr(event, "model_dump") else {}
@@ -97,8 +126,9 @@ async def send_ws_event(ws: WebSocket, event: ServerEvent) -> None:
     if ws.application_state != WebSocketState.CONNECTED:
         return
     try:
-        log_realtime_event("out", event)
-        await ws.send_json(event.model_dump())
+        payload = _ws_payload(event)
+        log_realtime_event("out", payload)
+        await ws.send_json(payload)
     except WebSocketDisconnect:
         logger.debug("Skipped event: ws disconnected mid-send")
     except RuntimeError as e:

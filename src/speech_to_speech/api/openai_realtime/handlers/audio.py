@@ -16,6 +16,7 @@ from openai.types.realtime import (
 from speech_to_speech.api.openai_realtime.handlers.base import RealtimeBaseHandler
 from speech_to_speech.api.openai_realtime.utils import resample
 from speech_to_speech.pipeline.events import SpeechStartedEvent, SpeechStoppedEvent
+from speech_to_speech.pipeline.log_context import tel_log
 
 if TYPE_CHECKING:
     from speech_to_speech.api.openai_realtime.service import ServerEvent
@@ -110,6 +111,14 @@ class AudioHandler(RealtimeBaseHandler):
         response = self._service.response
         events: list[ServerEvent] = []
         st = self._state(conn_id)
+        tel_log(
+            "vad",
+            "speech_start",
+            t0=st.connected_at_s,
+            session=conn_id[:12],
+            call=st.tel_call or conn_id[:12],
+            turn=event.turn_id or "",
+        )
         if st.in_response and event.interrupt_response and st.runtime_config.interrupt_response_enabled:
             events.extend(response.finish_response(conn_id, status="cancelled", reason="turn_detected"))
         is_reopen = bool(event.reopened and event.turn_id is not None and event.turn_id == st.speculative_turn_id)
@@ -149,8 +158,18 @@ class AudioHandler(RealtimeBaseHandler):
 
     def on_speech_stopped(self, conn_id: str, event: SpeechStoppedEvent) -> list[ServerEvent]:
         """Handle VAD speech_stopped: record duration and emit stopped event."""
+        st = self._state(conn_id)
+        tel_log(
+            "vad",
+            "speech_stop",
+            t0=st.connected_at_s,
+            session=conn_id[:12],
+            call=st.tel_call or conn_id[:12],
+            dur_ms=int((event.duration_s or 0) * 1000),
+            turn=event.turn_id or "",
+        )
         if event.duration_s:
-            self._state(conn_id).input_audio_duration_s = event.duration_s
+            st.input_audio_duration_s = event.duration_s
         return [
             InputAudioBufferSpeechStoppedEvent(
                 type="input_audio_buffer.speech_stopped",
@@ -209,6 +228,16 @@ class AudioHandler(RealtimeBaseHandler):
             else:
                 client_out_rate = PIPELINE_SAMPLE_RATE
         audio = resample(audio, PIPELINE_SAMPLE_RATE, client_out_rate)
+        if not st.first_audio_logged:
+            st.first_audio_logged = True
+            tel_log(
+                "s2s",
+                "first_audio",
+                t0=st.connected_at_s,
+                session=conn_id[:12],
+                call=st.tel_call or conn_id[:12],
+                bytes=len(audio),
+            )
         b64 = base64.b64encode(audio).decode("ascii")
         events.append(
             ResponseAudioDeltaEvent(

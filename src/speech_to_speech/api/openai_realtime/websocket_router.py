@@ -31,6 +31,7 @@ from speech_to_speech.api.openai_realtime.transports import (
     WebSocketTransport,
     log_realtime_event,
     send_ws_event,
+    tel_log,
 )
 from speech_to_speech.pipeline.control import SESSION_END, PipelineControlMessage, is_control_message
 from speech_to_speech.pipeline.events import (
@@ -284,6 +285,214 @@ def _should_discard_audio(unit: PipelineUnit, item: Any) -> bool:
     return _generation_is_discardable(unit, _audio_generation(item))
 
 
+def _opening_from_instructions(text: str) -> str:
+    import re
+
+    if not text:
+        return ""
+    tagged = re.search(r"Opening line:[\s\S]*?turn:\s*\n([^\n]+)", text, re.I)
+    if tagged and tagged.group(1).strip():
+        return tagged.group(1).strip()[:280]
+    labeled = re.search(r"Opening line:\s*\n([^\n]+)", text, re.I)
+    if labeled and labeled.group(1).strip():
+        return labeled.group(1).strip()[:280]
+    return ""
+
+
+def _opening_from_session(session: Any) -> str:
+    return _opening_from_instructions(str(getattr(session, "instructions", None) or ""))
+
+
+def _tel(st: Any, event: str, **kv: Any) -> None:
+    call = str(getattr(st, "tel_call", "") or "")
+    session = str(getattr(st, "session_id", "") or "")[:12]
+    tel_log("s2s", event, t0=getattr(st, "connected_at_s", None), call=call or session, session=session, **kv)
+
+
+def _conn_state(unit: PipelineUnit, session_id: str | None) -> Any | None:
+    if not session_id:
+        return None
+    try:
+        return unit.service._state(session_id)
+    except KeyError:
+        return None
+
+
+def _holds_input_until_answer(st: Any) -> bool:
+    if st.answered or st.opening_kicked:
+        return False
+    return bool(st.opening_line or _opening_from_session(st.runtime_config.session))
+
+
+def _holds_output_until_answer(st: Any) -> bool:
+    return (not st.answered) and bool(st.opening_line or st.opening_warming)
+
+
+def _session_gone(unit: PipelineUnit, session_id: str) -> bool:
+    sess = unit.session
+    return sess is None or sess.session_id != session_id or sess.released_at is not None
+
+
+def _pcm16_bytes(block: Any) -> bytes:
+    if isinstance(block, (bytes, bytearray)):
+        return bytes(block)
+    if isinstance(block, np.ndarray):
+        arr = np.ascontiguousarray(block)
+        if arr.dtype != np.int16:
+            clipped = np.clip(arr.astype(np.float64), -1.0, 1.0)
+            arr = (clipped * 32767.0).astype(np.int16)
+        return arr.tobytes()
+    if hasattr(block, "tobytes"):
+        return block.tobytes()
+    return b""
+
+
+def _minimax_opening_pcm(text: str, *, cancelled: Callable[[], bool]) -> bytes:
+    api_key = os.getenv("MINIMAX_TTS_API_KEY") or os.getenv("MINIMAX_API_KEY")
+    voice_id = os.getenv("MINIMAX_TTS_VOICE_ID")
+    if not text or not api_key or not voice_id or cancelled():
+        return b""
+    from speech_to_speech.TTS.minimax_tts_handler import (  # noqa: PLC0415
+        MiniMaxStreamingClient,
+        MiniMaxTTSConfig,
+        _resolved_minimax_speed,
+    )
+
+    cfg = MiniMaxTTSConfig(
+        api_key=api_key,
+        voice_id=voice_id,
+        model=os.getenv("MINIMAX_TTS_MODEL", "speech-2.8-turbo"),
+        endpoint=os.getenv("MINIMAX_TTS_ENDPOINT", "wss://api.minimax.io/ws/v1/t2a_v2"),
+        language_boost=os.getenv("MINIMAX_TTS_LANGUAGE_BOOST", "auto"),
+        speed=_resolved_minimax_speed(None),
+    )
+    client = MiniMaxStreamingClient(cfg)
+    buf = bytearray()
+    try:
+        client.start(cancelled=cancelled)
+        for block in client.synthesize(text, cancelled=cancelled):
+            buf.extend(_pcm16_bytes(block))
+        for block in client.finish(cancelled=cancelled):
+            buf.extend(_pcm16_bytes(block))
+    finally:
+        try:
+            client.close(graceful=True)
+        except Exception:
+            pass
+    return bytes(buf)
+
+
+def _start_opening_cache(unit: PipelineUnit, session_id: str, line: str) -> None:
+    st = unit.service._state(session_id)
+    text = (line or st.opening_line or _opening_from_session(st.runtime_config.session)).strip()[:280]
+    if not text:
+        return
+    st.opening_line = text
+    if st.opening_warming or st.opening_kicked:
+        return
+    st.opening_warming = True
+    _tel(st, "opening_cache_start")
+
+    def run() -> None:
+        try:
+            pcm = _minimax_opening_pcm(text, cancelled=lambda: _session_gone(unit, session_id))
+            if not pcm or _session_gone(unit, session_id):
+                st.opening_warming = False
+                _tel(st, "opening_cache_empty")
+                return
+            step = 512 * 2
+            for i in range(0, len(pcm), step):
+                if _session_gone(unit, session_id):
+                    return
+                unit.output_queue.put(AudioOutput(audio=pcm[i : i + step]))
+            unit.output_queue.put(AUDIO_RESPONSE_DONE)
+            st.opening_ready = True
+            st.opening_warming = False
+            _tel(st, "opening_cached", bytes=len(pcm))
+        except Exception:
+            logger.exception("Opening MiniMax cache failed")
+            st.opening_warming = False
+            _tel(st, "opening_cache_fail")
+
+    Thread(target=run, daemon=True, name="opening-cache").start()
+
+
+def _stash_opening_audio(session: SessionState, unit: PipelineUnit, session_id: str, audio_chunk: Any) -> bool:
+    st = _conn_state(unit, session_id)
+    if st is None or not _holds_output_until_answer(st):
+        return False
+    if _is_audio_done(audio_chunk):
+        session.held_opening_done = True
+        st.opening_ready = True
+        return True
+    if _is_pipeline_end(audio_chunk) or is_control_message(audio_chunk):
+        return False
+    if _should_discard_audio(unit, audio_chunk):
+        return True
+    pcm = _to_audio_bytes(audio_chunk)
+    if pcm:
+        session.held_opening.append(pcm)
+        st.opening_ready = True
+        if not st.opening_hold_logged:
+            st.opening_hold_logged = True
+            _tel(st, "opening_held", bytes=len(pcm))
+    return True
+
+
+def _next_held_opening(session: SessionState, session_id: str, unit: PipelineUnit) -> Any:
+    st = _conn_state(unit, session_id)
+    if st is None or not st.answered:
+        return None
+    if session.held_opening:
+        return session.held_opening.pop(0)
+    if session.held_opening_done:
+        session.held_opening_done = False
+        return AUDIO_RESPONSE_DONE
+    return None
+
+
+async def _kick_opening_if_needed(unit: PipelineUnit, session_id: str, transport: SessionTransport) -> None:
+    st = unit.service._state(session_id)
+    st.answered = True
+    if st.opening_kicked:
+        return
+    if st.opening_ready or st.opening_warming:
+        st.opening_kicked = True
+        _tel(st, "opening_flush", cached=1)
+        return
+    line = st.opening_line or _opening_from_session(st.runtime_config.session)
+    if not line:
+        return
+    st.opening_kicked = True
+    _tel(st, "opening_kick_llm")
+    item_event = unit.service.parse_client_event(
+        {
+            "type": "conversation.item.create",
+            "item": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": f"The callee answered. Speak now. Say exactly this sentence and nothing else: {line}",
+                    }
+                ],
+            },
+        }
+    )
+    if item_event is not None:
+        events = unit.service.handle_conversation_item_create(session_id, item_event)
+        if events:
+            await transport.send_events(events)
+    create_event = unit.service.parse_client_event({"type": "response.create"})
+    if create_event is not None:
+        result = unit.service.handle_response_create(session_id, create_event)
+        if result:
+            if result.type != "error":
+                unit.cancel_scope.new_response()
+            await transport.send_events([result])
+
+
 def _safe_unregister(unit: PipelineUnit, session_id: str) -> None:
     try:
         unit.service.unregister(session_id)
@@ -403,8 +612,11 @@ async def _dispatch_client_event(
                 ]
             )
             return
+        st = service._state(session_id)
+        if _holds_input_until_answer(st):
+            return
         chunks = service.handle_audio_append(session_id, event)
-        rt_cfg = service._state(session_id).runtime_config
+        rt_cfg = st.runtime_config
         for chunk in chunks:
             unit.input_queue.put((chunk, rt_cfg))
 
@@ -431,6 +643,13 @@ async def _dispatch_client_event(
         err = service.handle_session_update(session_id, event)
         if err:
             await transport.send_events([err])
+            return
+        st = service._state(session_id)
+        line = _opening_from_session(st.runtime_config.session)
+        if line:
+            st.opening_line = line
+            _tel(st, "session_update", opening=1)
+            _start_opening_cache(unit, session_id, line)
 
     elif isinstance(event, ConversationItemCreateEvent):
         events = service.handle_conversation_item_create(session_id, event)
@@ -578,6 +797,9 @@ def create_app(
         try:
             session_id = unit.service.register()
             unit.session.session_id = session_id
+            st = unit.service._state(session_id)
+            st.tel_call = (ws.query_params.get("call") or "").strip()[:48]
+            _tel(st, "ws_open", pipeline=unit.index, brain="local")
             logger.info(f"Client connected to pipeline {unit.index} (session {session_id})")
 
             # Defensive: drain edge queues and reset events so stale data from a
@@ -600,6 +822,12 @@ def create_app(
         except Exception as e:
             logger.error(f"Client {session_id} on pipeline {unit.index} error: {type(e).__name__}: {e}", exc_info=True)
         finally:
+            if session_id:
+                try:
+                    st = unit.service._state(session_id)
+                    _tel(st, "hangup", why="ws_close")
+                except KeyError:
+                    tel_log("s2s", "hangup", session=session_id[:12], why="ws_close")
             # Hold the session reference: the send loop's snapshot will still resolve
             # to this object until we clear unit.session, so any handler output that
             # arrives during the drain window is sent to the now-closed ws (silently
@@ -667,6 +895,55 @@ def create_app(
             "in_use": sum(1 for u in pool if u.session is not None),
             "units": [_state(u) for u in pool],
         }
+
+    @app.post("/v1/opening")
+    async def opening_endpoint(request: Request) -> dict[str, Any]:
+        """Warm MiniMax opening PCM on Dial; flush it on SIP 200."""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        greeting = str(body.get("greeting") or body.get("text") or "").strip()[:280]
+        warm = bool(body.get("warm"))
+        cached: list[dict[str, Any]] = []
+        kicked: list[str] = []
+        for unit in pool:
+            session = unit.session
+            if session is None or session.released_at is not None or not session.session_id:
+                continue
+            try:
+                st = unit.service._state(session.session_id)
+            except KeyError:
+                continue
+            if greeting:
+                st.opening_line = greeting
+            if warm:
+                _start_opening_cache(unit, session.session_id, greeting or st.opening_line)
+                cached.append(
+                    {
+                        "session": session.session_id,
+                        "ready": st.opening_ready,
+                        "bytes": sum(len(b) for b in session.held_opening),
+                        "warming": st.opening_warming,
+                    }
+                )
+                continue
+            _tel(st, "pickup", ready=int(st.opening_ready))
+            if session.transport is not None:
+                await _kick_opening_if_needed(unit, session.session_id, session.transport)
+            else:
+                st.answered = True
+            kicked.append(session.session_id)
+            cached.append(
+                {
+                    "session": session.session_id,
+                    "ready": st.opening_ready,
+                    "bytes": sum(len(b) for b in session.held_opening),
+                }
+            )
+        return {"ok": True, "cached": cached, "kicked": kicked, "warm": warm}
 
     @app.post("/v1/realtime/calls")
     async def webrtc_calls_endpoint(request: Request) -> Response:
@@ -885,11 +1162,22 @@ def create_app(
                     pass
 
                 try:
-                    if session is not None and session.pending_output_item is not None:
-                        audio_chunk = session.pending_output_item
-                        session.pending_output_item = None
-                    else:
-                        audio_chunk = unit.output_queue.get_nowait()
+                    pulled_held = False
+                    if session is not None and session_id:
+                        held = _next_held_opening(session, session_id, unit)
+                        if held is not None:
+                            audio_chunk = held
+                            pulled_held = True
+                    if not pulled_held:
+                        if session is not None and session.pending_output_item is not None:
+                            audio_chunk = session.pending_output_item
+                            session.pending_output_item = None
+                        else:
+                            audio_chunk = unit.output_queue.get_nowait()
+                        if session is not None and session_id and _stash_opening_audio(
+                            session, unit, session_id, audio_chunk
+                        ):
+                            continue
 
                     if _is_pipeline_end(audio_chunk):
                         await _drain_pending_response_events(transport, unit, session_id)
@@ -938,7 +1226,7 @@ def create_app(
                     audio_chunk = _to_audio_bytes(audio_chunk)
 
                     audio_batch = bytearray(audio_chunk)
-                    while len(audio_batch) < MAX_AUDIO_BATCH_BYTES:
+                    while not pulled_held and len(audio_batch) < MAX_AUDIO_BATCH_BYTES:
                         try:
                             next_chunk = unit.output_queue.get_nowait()
                         except Empty:

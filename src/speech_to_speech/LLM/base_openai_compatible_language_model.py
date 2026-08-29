@@ -40,6 +40,7 @@ from speech_to_speech.LLM.utils import (
     split_spoken_units,
 )
 from speech_to_speech.LLM.voice_prompt import build_voice_system_prompt
+from speech_to_speech.pipeline.log_context import tel_log
 from speech_to_speech.pipeline.cancel_scope import CancelScope
 from speech_to_speech.pipeline.handler_types import LLMIn, LLMOut
 from speech_to_speech.pipeline.messages import (
@@ -697,6 +698,14 @@ class BaseOpenAICompatibleHandler(BaseHandler[LLMIn, LLMOut], ABC):
                         perf_counter() - request_started_at_s,
                         turn.turn_id,
                         turn.turn_revision,
+                    )
+                    tel_log(
+                        "llm",
+                        "first_token",
+                        t0=turn.speech_stopped_at_s or request_started_at_s,
+                        turn=turn.turn_id or "",
+                        hop="llm",
+                        hop_ms=int((perf_counter() - request_started_at_s) * 1000),
                     )
                     if turn.speech_stopped_at_s is not None:
                         logger.info(

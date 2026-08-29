@@ -1,0 +1,79 @@
+<h2>How should live voice controls fit into Langflow Playground?</h2>
+<p class="subtitle">Both layouts keep the flow canvas visible and use the same direct speech-to-speech WebSocket.</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:14px;background:#101114;color:#e8e8ea;min-height:430px">
+      <div style="display:flex;gap:10px;height:400px">
+        <div style="flex:1;border:1px solid #333741;border-radius:10px;padding:10px;background:#17191e">
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:#9ca3af;margin-bottom:18px">
+            <span>Speech Agent Flow</span><span>▶ Playground</span>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:center;height:300px;gap:12px">
+            <div style="border:1px solid #5b6170;border-radius:8px;padding:12px;font-size:10px">Speech-to-Speech<br><b>Session</b></div>
+            <span style="color:#7c83ff">→</span>
+            <div style="border:1px solid #5b6170;border-radius:8px;padding:12px;font-size:10px">Tools</div>
+          </div>
+        </div>
+        <div style="width:240px;border:1px solid #333741;border-radius:10px;background:#1d2026;display:flex;flex-direction:column">
+          <div style="padding:11px 12px;border-bottom:1px solid #333741;font-size:12px"><b>Voice Playground</b> <span style="float:right;color:#62d49f">● Connected</span></div>
+          <div style="padding:10px 12px;font-size:10px;color:#aeb4c0;flex:1">
+            <div style="background:#262a32;border-radius:8px;padding:9px;margin-bottom:8px">You: Can you summarize my day?</div>
+            <div style="background:#30354a;border-radius:8px;padding:9px;margin-bottom:18px">Assistant: Of course. Let's start with your morning.</div>
+            <div style="text-align:center;margin:14px 0">
+              <div style="display:inline-grid;place-items:center;width:62px;height:62px;border-radius:50%;background:#655cf6;color:white;font-size:22px">◉</div>
+              <div style="margin-top:7px">Listening · 00:08</div>
+            </div>
+            <div style="border-top:1px solid #333741;padding-top:10px">
+              <b>Quick controls</b>
+              <div style="display:flex;justify-content:space-between;margin-top:9px"><span>Voice</span><span>English_Grace ▾</span></div>
+              <div style="display:flex;justify-content:space-between;margin-top:9px"><span>Interrupt response</span><span>●</span></div>
+            </div>
+          </div>
+          <div style="padding:10px;border-top:1px solid #333741;font-size:10px;display:flex;justify-content:space-between"><span>⚙ Session settings</span><span>Disconnect</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A · Integrated side panel</h3>
+      <p>Conversation and essential controls stay visible beside the canvas. Advanced settings open in the existing component inspector.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:14px;background:#101114;color:#e8e8ea;min-height:430px">
+      <div style="border:1px solid #333741;border-radius:10px;height:400px;background:#17191e;display:flex;flex-direction:column">
+        <div style="padding:11px 14px;border-bottom:1px solid #333741;font-size:12px;display:flex;justify-content:space-between"><b>Voice Playground</b><span style="color:#62d49f">● ws://localhost:8765</span></div>
+        <div style="display:flex;flex:1">
+          <div style="flex:1;padding:15px;border-right:1px solid #333741">
+            <div style="font-size:10px;color:#aeb4c0">
+              <div style="background:#262a32;border-radius:8px;padding:10px;margin:12px 0">You: Can you summarize my day?</div>
+              <div style="background:#30354a;border-radius:8px;padding:10px;margin:12px 0">Assistant: Of course. Let's start with your morning.</div>
+            </div>
+            <div style="text-align:center;margin-top:62px">
+              <div style="display:inline-grid;place-items:center;width:76px;height:76px;border-radius:50%;background:#655cf6;color:white;font-size:26px">◉</div>
+              <div style="font-size:11px;margin-top:9px">Listening · live transcript</div>
+            </div>
+          </div>
+          <div style="width:220px;padding:15px;font-size:10px;color:#b8bec9">
+            <b>Live session settings</b>
+            <div style="margin-top:14px;color:#8f96a3">INSTRUCTIONS</div>
+            <div style="background:#242831;border-radius:6px;padding:8px;margin-top:5px;height:42px">You are concise and helpful…</div>
+            <div style="margin-top:12px;display:flex;justify-content:space-between"><span>Voice</span><span>English_Grace ▾</span></div>
+            <div style="margin-top:12px;display:flex;justify-content:space-between"><span>VAD threshold</span><span>0.60</span></div>
+            <div style="height:4px;background:#343947;border-radius:4px;margin-top:5px"><div style="width:60%;height:100%;background:#655cf6;border-radius:4px"></div></div>
+            <div style="margin-top:12px;display:flex;justify-content:space-between"><span>Silence duration</span><span>500 ms</span></div>
+            <div style="margin-top:12px;display:flex;justify-content:space-between"><span>Interrupt response</span><span>●</span></div>
+            <div style="margin-top:18px;padding:8px;border:1px solid #3c4250;border-radius:6px;text-align:center">Tools & advanced settings</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B · Full-screen control room</h3>
+      <p>More room for the transcript and every live setting, but the flow canvas disappears while testing.</p>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:18px">Recommendation: A. It preserves Langflow's canvas-first workflow and avoids creating a second configuration surface.</p>

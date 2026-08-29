@@ -239,7 +239,7 @@ class TestClientEventDispatch:
                 msg1 = ws.receive_json()
                 msg2 = ws.receive_json()
                 types = {msg1["type"], msg2["type"]}
-                assert "response.output_audio.done" in types
+                assert "response.audio.done" in types
                 assert "response.done" in types
 
     def test_response_cancel_flushes_queues(self, setup):
@@ -323,7 +323,7 @@ class TestSendLoop:
                 msg1 = ws.receive_json()
                 assert msg1["type"] == "response.created"
                 msg2 = ws.receive_json()
-                assert msg2["type"] == "response.output_audio.delta"
+                assert msg2["type"] == "response.audio.delta"
 
     def test_audio_output_sends_response_created_and_delta(self, setup):
         app, _, _, output_queue, *_ = setup
@@ -335,7 +335,7 @@ class TestSendLoop:
                 assert msg1["type"] == "response.created"
                 assert msg1["response"]["status"] == "in_progress"
                 msg2 = ws.receive_json()
-                assert msg2["type"] == "response.output_audio.delta"
+                assert msg2["type"] == "response.audio.delta"
                 assert "delta" in msg2
 
     def test_audio_output_batches_immediately_available_chunks(self, setup):
@@ -351,14 +351,14 @@ class TestSendLoop:
                 assert msg1["type"] == "response.created"
 
                 msg2 = ws.receive_json()
-                assert msg2["type"] == "response.output_audio.delta"
+                assert msg2["type"] == "response.audio.delta"
                 decoded = base64.b64decode(msg2["delta"])
                 assert len(decoded) == len(_pcm_bytes(512))
 
                 msg3 = ws.receive_json()
                 msg4 = ws.receive_json()
                 types = {msg3["type"], msg4["type"]}
-                assert "response.output_audio.done" in types
+                assert "response.audio.done" in types
                 assert "response.done" in types
 
     def test_end_marker_sends_finish_events(self, setup):
@@ -373,7 +373,7 @@ class TestSendLoop:
                 msg1 = ws.receive_json()
                 msg2 = ws.receive_json()
                 types = {msg1["type"], msg2["type"]}
-                assert "response.output_audio.done" in types
+                assert "response.audio.done" in types
                 assert "response.done" in types
 
     def test_text_output_sends_pipeline_events(self, setup):
@@ -460,7 +460,7 @@ class TestSendLoop:
                 assert ws.receive_json()["type"] == "response.created"
                 delta = ws.receive_json()
 
-                assert delta["type"] == "response.output_audio.delta"
+                assert delta["type"] == "response.audio.delta"
                 assert len(base64.b64decode(delta["delta"])) == len(_pcm_bytes(512))
 
     def test_current_generation_text_survives_stuck_discarding(self, setup):
@@ -491,11 +491,11 @@ class TestSendLoop:
                 for _ in range(8):
                     msg = ws.receive_json()
                     types.append(msg["type"])
-                    if msg["type"] == "response.output_audio_transcript.done":
+                    if msg["type"] == "response.audio_transcript.done":
                         transcript = msg["transcript"]
                     if msg["type"] == "response.done":
                         break
-                assert "response.output_audio_transcript.done" in types
+                assert "response.audio_transcript.done" in types
                 assert transcript == "hello there"
 
     def test_stale_tagged_response_done_does_not_finish_current_response(self, setup):
@@ -536,7 +536,7 @@ class TestSendLoop:
                 assert ws.receive_json()["type"] == "response.function_call_arguments.done"
                 msg1 = ws.receive_json()
                 msg2 = ws.receive_json()
-                assert {msg1["type"], msg2["type"]} == {"response.output_audio.done", "response.done"}
+                assert {msg1["type"], msg2["type"]} == {"response.audio.done", "response.done"}
 
                 assert service.total_usage.input_tokens == 10
                 assert service.total_usage.output_tokens == 5
@@ -926,3 +926,60 @@ def test_log_realtime_event_skips_appends_and_extra_audio_deltas(caplog):
     assert text.count("response.output_audio.delta") == 1
     assert "transcription.completed" in text
     assert "hello" in text
+
+
+def test_ws_payload_rewrites_active_call_audio_types():
+    from speech_to_speech.api.openai_realtime.transports import _ws_payload
+
+    assert _ws_payload({"type": "response.output_audio.delta", "delta": "AA"})["type"] == "response.audio.delta"
+    assert _ws_payload({"type": "response.output_audio.done"})["type"] == "response.audio.done"
+
+
+class TestOpeningHold:
+    def test_pcm_is_held_until_opening_flush(self):
+        unit = _make_unit(0)
+        app = create_app(pool=[unit], stop_event=ThreadingEvent())
+        with TestClient(app) as client:
+            with client.websocket_connect("/v1/realtime") as ws:
+                ws.receive_json()
+                assert unit.session is not None
+                st = unit.service._state(unit.session.session_id)
+                st.opening_line = "您好，我是小翠儿。"
+                unit.output_queue.put(_pcm_bytes(256))
+                deadline = time.monotonic() + 1.5
+                while time.monotonic() < deadline and not unit.session.held_opening:
+                    time.sleep(0.05)
+                assert unit.session.held_opening
+                r = client.post("/v1/opening", json={"greeting": "您好，我是小翠儿。", "warm": False})
+                body = r.json()
+                assert body["ok"] is True
+                assert body["kicked"]
+                assert ws.receive_json()["type"] == "response.created"
+                delta = ws.receive_json()
+                assert delta["type"] == "response.audio.delta"
+
+    def test_warm_opening_caches_before_pickup(self, monkeypatch):
+        monkeypatch.setattr(router_module, "_minimax_opening_pcm", lambda text, cancelled: _pcm_bytes(512))
+        unit = _make_unit(0)
+        app = create_app(pool=[unit], stop_event=ThreadingEvent())
+        with TestClient(app) as client:
+            with client.websocket_connect("/v1/realtime") as ws:
+                ws.receive_json()
+                r = client.post("/v1/opening", json={"greeting": "您好，我是小翠儿。", "warm": True})
+                assert r.json()["ok"] is True
+                deadline = time.monotonic() + 2.0
+                while time.monotonic() < deadline:
+                    st = unit.service._state(unit.session.session_id)
+                    if st.opening_ready:
+                        break
+                    time.sleep(0.05)
+                st = unit.service._state(unit.session.session_id)
+                assert st.opening_ready
+                assert st.answered is False
+                r2 = client.post("/v1/opening", json={"greeting": "您好，我是小翠儿。", "warm": False})
+                assert r2.json()["kicked"]
+                assert st.answered is True
+                created = ws.receive_json()
+                assert created["type"] == "response.created"
+                delta = ws.receive_json()
+                assert delta["type"] == "response.audio.delta"

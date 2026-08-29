@@ -1,4 +1,5 @@
 import logging
+import time
 from collections.abc import Mapping
 from queue import Queue
 from threading import Event as ThreadingEvent
@@ -187,6 +188,15 @@ class ConnState(BaseModel):
     # write-back (cross-thread), so they are buffered here and flushed in order
     # once the response completes. See ConversationHandler.flush_deferred_items.
     deferred_items: list[ConversationItem] = Field(default_factory=list)
+    connected_at_s: float = Field(default_factory=time.monotonic)
+    first_audio_logged: bool = False
+    opening_line: str = ""
+    opening_kicked: bool = False
+    answered: bool = False
+    opening_warming: bool = False
+    opening_ready: bool = False
+    opening_hold_logged: bool = False
+    tel_call: str = ""
 
 
 class RealtimeService:

@@ -10,6 +10,7 @@ from speech_to_speech.baseHandler import BaseHandler
 from speech_to_speech.LLM.chat import make_user_message
 from speech_to_speech.pipeline.events import PartialTranscriptionEvent, TranscriptionCompletedEvent
 from speech_to_speech.pipeline.handler_types import LLMIn, STTOut
+from speech_to_speech.pipeline.log_context import tel_log
 from speech_to_speech.pipeline.messages import GenerateResponseRequest, PartialTranscription, Transcription
 from speech_to_speech.pipeline.queue_types import TextEventItem
 
@@ -91,6 +92,15 @@ class TranscriptionNotifier(BaseHandler[STTOut, Union[STTOut, LLMIn]]):
             logger.info("Transcription completed (language=%s): %s", language_code, transcript)
         else:
             logger.info("Transcription completed: %s", transcript)
+        tel_log(
+            "asr",
+            "final",
+            t0=speech_stopped_at_s,
+            chars=len(transcript),
+            lang=language_code or "",
+            turn=turn_id or "",
+            hop="asr",
+        )
 
         if self.runtime_config is not None:
             self.runtime_config.chat.add_item(make_user_message(transcript))
