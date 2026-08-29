@@ -1,8 +1,9 @@
-# API-only cascade (Tencent ASR + DeepSeek + MiniMax). No GPU required.
+# API-only cascade (Tencent ASR + DeepSeek + MiniMax). No GPU / local TTS required.
 FROM python:3.11-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
+    VIRTUAL_ENV=/usr/src/app/.venv \
     PATH="/usr/src/app/.venv/bin:${PATH}" \
     UV_LINK_MODE=copy \
     S2S_PROFILE=/usr/src/app/configs/tencent-deepseek-minimax.json
@@ -14,14 +15,15 @@ RUN apt-get update \
         ca-certificates \
         libsndfile1 \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir uv
+    && pip install --no-cache-dir uv \
+    && uv venv --python /usr/local/bin/python3 "${VIRTUAL_ENV}"
 
-# Official python images install to /usr/local/bin, not /usr/bin.
-COPY pyproject.toml README.md LICENSE MANIFEST.in ./
-RUN uv sync --python /usr/local/bin/python3 --no-install-project --no-dev --extra tencent-asr
+# Install only the hosted-cascade deps (avoids qwentts-cpp-python manylinux_2_39).
+COPY requirements.custom.txt pyproject.toml README.md LICENSE MANIFEST.in ./
+RUN uv pip install --python "${VIRTUAL_ENV}/bin/python" -r requirements.custom.txt
 
 COPY . .
-RUN uv sync --python /usr/local/bin/python3 --no-dev --extra tencent-asr \
+RUN uv pip install --python "${VIRTUAL_ENV}/bin/python" --no-deps -e . \
     && python -c "import nltk; nltk.download('punkt_tab'); nltk.download('averaged_perceptron_tagger_eng')"
 
 EXPOSE 8765
