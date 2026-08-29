@@ -1062,7 +1062,7 @@ def test_custom_service_json_profile_selects_all_three_providers():
     assert args.responses_api_language_model_handler_kwargs.chat_size == 8
     assert args.responses_api_language_model_handler_kwargs.compact_history is False
     assert args.responses_api_language_model_handler_kwargs.stream_batch_sentences == 1
-    assert args.responses_api_language_model_handler_kwargs.stream_first_chunk_lookahead_chars == 8
+    assert args.responses_api_language_model_handler_kwargs.stream_first_chunk_lookahead_chars == 3
     assert args.responses_api_language_model_handler_kwargs.request_hedge_after_ms == 2000
     # Hand-tuned in the profile; assert the accepted range, not the current value.
     assert 0.5 <= args.minimax_tts_handler_kwargs.minimax_tts_speed <= 2.0

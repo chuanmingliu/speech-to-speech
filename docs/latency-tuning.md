@@ -62,6 +62,30 @@ model, re-run the benchmark before trusting the default.
 
 Set to `0` to restore the sentence-only behaviour.
 
+### Tuning the lookahead once openers are primed
+
+The lookahead is pure delay on the first chunk: it waits for N characters past
+the clause boundary before flushing. Priming changes the trade, because a cached
+opener is audible immediately and its playback then covers more of the wait for
+the next chunk. On the Chinese corpus at 40 tok/s with the profile's primed
+openers:
+
+| lookahead | median first audio | new playback gaps |
+| --- | --- | --- |
+| 8 (code default) | 527 ms | none in Chinese |
+| **3 (profile)** | **414 ms** | none in Chinese; `en-weather` 77 ms |
+| 2 | 414 ms | as above |
+
+The profile therefore ships `3`, worth **113 ms**. The code default stays at `8`
+because this trade depends on two things being true, and neither is true
+everywhere:
+
+- **Output rate at or above ~40 tok/s.** At 30 tok/s the English gap grows to
+  202 ms; at 20 tok/s lookahead 3 opens gaps in three Chinese cases too, the
+  worst 220 ms. If you change LLM, re-run the benchmark before keeping `3`.
+- **A primed opener.** English openers are not in the profile's prime list,
+  which is why `en-weather` is the one case that degrades.
+
 ## `request_hedge_after_ms` (default 0, off; 2000 in the Tencent profile)
 
 `asr_final_to_first_assistant_text_ms` has a p99 of nearly twelve seconds — a

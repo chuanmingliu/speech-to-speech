@@ -15,7 +15,7 @@
   "chat_size": 8,
   "compact_history": false,
   "stream_batch_sentences": 1,
-  "stream_first_chunk_lookahead_chars": 8,
+  "stream_first_chunk_lookahead_chars": 3,
   "request_hedge_after_ms": 2000,
   "speculative_reopen_ms": 250,
   "speech_pad_ms": 80,
