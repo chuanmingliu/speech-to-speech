@@ -31,16 +31,38 @@ works this way — later chunks stay sentence-aligned, so prosody is unaffected
 after the opening clause. Punctuation inside numbers (`1,000`, `3.14`, `12:30`)
 and versioned names (`gpt-5.4-mini`) is not treated as a pause.
 
-Measured at a 40 tok/s output rate with a 350 ms provider TTFT:
+`scripts/latency_ab_benchmark.py stream` replays a 14-reply corpus (Chinese and
+English, with and without clause punctuation) through the real handler. Against
+an actual `feat_0824` checkout the baseline column reproduces exactly, so the
+A/B is faithful. At 40 tok/s with a 350 ms TTFT:
 
-| reply | sentence-only | clause-early | saved |
-| --- | --- | --- | --- |
-| English, 17 tokens | 792 ms | 427 ms | **365 ms** |
-| Chinese, 16 tokens | 730 ms | 502 ms | **227 ms** |
+- first audio is earlier in **8 of 14** cases, **median 63 ms**, mean 102 ms,
+  best 325 ms;
+- the six unchanged cases have no clause punctuation before the terminator,
+  which is the honest ceiling on this technique;
+- it costs one extra TTS request per early flush.
+
+The saving scales inversely with token rate — a slower model spends longer
+writing the first sentence, so skipping that wait is worth more:
+
+| tok/s | mean saving | cases with a new playback gap |
+| --- | --- | --- |
+| 20 | 204 ms | 2 |
+| 25 | 163 ms | 1 |
+| 30 | 136 ms | 1 |
+| 40 | 102 ms | 1 (27 ms — inaudible) |
+| 60 | 68 ms | 0 |
+
+**The gap column is the real caveat.** A short English opening clause ("Sure,",
+~300 ms of audio) can finish speaking before the rest of the sentence has been
+generated and synthesised. At the profile's 40 tok/s the worst case is a 27 ms
+gap, which no one can hear. Below ~30 tok/s it grows: at 20 tok/s that case buys
+650 ms of earlier onset at the cost of a 352 ms stutter. If you move to a slower
+model, re-run the benchmark before trusting the default.
 
 Set to `0` to restore the sentence-only behaviour.
 
-## `request_hedge_after_ms` (default 0, off; 1200 in the Tencent profile)
+## `request_hedge_after_ms` (default 0, off; 2000 in the Tencent profile)
 
 `asr_final_to_first_assistant_text_ms` has a p99 of nearly twelve seconds — a
 cold route, a slow node or an SDK retry occasionally stalls a completion for far
@@ -53,14 +75,47 @@ closed in the background. A failed first attempt is retried immediately rather
 than waiting out the timer. Completions have no server-side side effects, so
 the duplicate is safe.
 
-This trades tokens for tail latency: the hedge only fires on turns already
-slower than the window, so at 1200 ms it costs a duplicate request on the slow
-minority of turns and leaves the median untouched. Raise the value to spend
-less, lower it to cut more of the tail. Set to `0` to disable.
+`scripts/latency_ab_benchmark.py hedge` fits a lognormal to the measured
+percentiles and simulates the windows (200k samples each):
+
+| hedge after | p50 | p95 | p99 | extra requests |
+| --- | --- | --- | --- | --- |
+| off | 884 ms | 4668 ms | 9281 ms | — |
+| 800 ms | 872 ms | 2322 ms | 3684 ms | 54% |
+| 1200 ms | 880 ms | 2531 ms | 3859 ms | 38% |
+| **2000 ms** | 874 ms | 2996 ms | 4271 ms | **21%** |
+| 3000 ms | 879 ms | 3642 ms | 4888 ms | 11% |
+
+The median is untouched at every setting — hedging only ever acts on turns that
+are already slow. The profile ships **2000 ms** because 1200 ms nearly doubles
+the request count for about 400 ms more p99; drop to 1200 ms if tail latency
+matters more than tokens, and `0` to disable.
+
+Two caveats. The simulation assumes the two attempts fail independently; if a
+slow turn is caused by something shared — provider-wide overload, a saturated
+link — the retry is slow too and the real gain is smaller. And the fitted
+lognormal reaches p99 9.4 s against a measured 11.8 s, so it slightly
+understates the extreme tail.
 
 ## Re-measuring
 
-Both knobs are visible in the same benchmark that produced the table above:
+Offline, in milliseconds, with no API keys and no provider traffic:
+
+```bash
+python scripts/latency_ab_benchmark.py stream          # first-chunk A/B + gap check
+python scripts/latency_ab_benchmark.py hedge           # tail vs duplicate-request cost
+```
+
+To A/B against another branch, point the harness at its checkout — the old
+handler absorbs the unknown kwarg, so both of its columns come out identical,
+which is how the baseline is validated:
+
+```bash
+git archive feat_0824 src | tar -x -C /tmp/base
+S2S_SRC=/tmp/base/src python scripts/latency_ab_benchmark.py stream
+```
+
+Against live providers, the full corpus still applies:
 
 ```bash
 uv run python scripts/synthetic_latency_benchmark.py run --limit-cases 20
@@ -68,3 +123,12 @@ uv run python scripts/synthetic_latency_benchmark.py run --limit-cases 20
 
 Watch `speech_stop_to_first_audio_ms` p50 for the first-chunk change and p95/p99
 for hedging.
+
+## Unrelated bug this surfaced
+
+The corpus exposed a pre-existing sentence-splitting fault, present on
+`feat_0824` too: `nltk.sent_tokenize` breaks inside decimals and versioned
+names, so "The total is 1,299.50 dollars" is sent to TTS as "The total is
+1,299." followed by "50 dollars", and "gpt-5.4-mini" as "gpt-5." then
+"4-mini". The number guard added here protects the *clause* split but not
+nltk's sentence split. Worth fixing separately.

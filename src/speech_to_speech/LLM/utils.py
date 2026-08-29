@@ -91,9 +91,13 @@ def split_first_spoken_unit(text: str, lookahead_chars: int) -> tuple[str, str]:
 
     Unlike :func:`split_spoken_units` this breaks on clause punctuation too, so
     the first TTS request goes out before the sentence is finished. The split
-    only happens once ``lookahead_chars`` characters are buffered: that is what
-    makes releasing a short opening clause safe, because text past the break is
-    already in hand and the follow-up chunk will not leave a gap in playback.
+    only happens once ``lookahead_chars`` characters are buffered, which bounds
+    -- but does not eliminate -- the risk that playback runs dry: a short
+    opening clause ("Sure,") can still finish speaking before the rest of the
+    sentence has been generated and synthesised. That only bites when the model
+    streams slowly; ``scripts/latency_ab_benchmark.py`` measures it, and below
+    roughly 30 tok/s the gap becomes audible for short English clauses.
+
     Note this bounds the *buffer*, not the returned prefix -- gating on prefix
     length instead would skip the early comma that makes this worth doing.
 

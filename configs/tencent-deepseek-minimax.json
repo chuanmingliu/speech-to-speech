@@ -16,11 +16,11 @@
   "compact_history": false,
   "stream_batch_sentences": 1,
   "stream_first_chunk_lookahead_chars": 8,
-  "request_hedge_after_ms": 1200,
+  "request_hedge_after_ms": 2000,
   "speculative_reopen_ms": 250,
   "speech_pad_ms": 80,
   "tts": "minimax",
-  "minimax_tts_speed": 1.2,
+  "minimax_tts_speed": 1.3,
   "num_pipelines": 1,
   "log_level": "info"
 }
