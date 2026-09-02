@@ -20,6 +20,9 @@ backend, speaking the OpenAI Realtime **GA** protocol over **WebSocket**
 
 ## Quick start (local)
 
+No Hugging Face OAuth is required for local use. Metering and sign-in stay off
+unless both `LOAD_BALANCER_URL` and `SPACE_ID` are set (the deployed Space).
+
 1. **Start the speech-to-speech backend** in realtime mode (from the repo root;
    see the [backend README](https://github.com/huggingface/speech-to-speech/blob/main/src/speech_to_speech/api/openai_realtime/README.md)
    for more model combinations):
@@ -39,11 +42,13 @@ backend, speaking the OpenAI Realtime **GA** protocol over **WebSocket**
    The realtime server listens on `ws://localhost:8765/v1/realtime` by default
    (`--ws_host` / `--ws_port` to change).
 
-2. **Start this app**, pointing it at the backend with `SPEECH_TO_SPEECH_URL`:
+2. **Start this app**. `SPEECH_TO_SPEECH_URL` defaults to
+   `ws://127.0.0.1:8765/v1/realtime` when neither it nor `LOAD_BALANCER_URL` is
+   set:
 
    ```bash
    uv pip install -r demo/requirements.txt
-   export SPEECH_TO_SPEECH_URL=ws://localhost:8765/v1/realtime
+   # optional override: export SPEECH_TO_SPEECH_URL=ws://127.0.0.1:8765/v1/realtime
    export SERPER_API_KEY=...   # optional; web search is disabled without it
    uv run uvicorn --app-dir demo server:app --reload --port 7860
    ```
@@ -73,7 +78,15 @@ backend, speaking the OpenAI Realtime **GA** protocol over **WebSocket**
    > **without Docker** (the `uvicorn` command above) so host and container
    > namespaces collapse — then `ws://localhost:8765/v1/realtime` works for both.
 
-3. Open <http://localhost:7860/>, click the orb, allow the mic, talk.
+3. Open the UI:
+
+   - <http://localhost:7860/> — talk to the bot (click the orb, allow the mic).
+   - <http://localhost:7860/lab> — same page with the **monitor + test-case**
+     dock open (toolbar chart button also toggles it). Talk, run a named case
+     (C1 / C3 / C4 / C6 / C7 / latency turn), and watch client-measured TTFA,
+     barge-in stop, onset, and hangover against the locked SLOs. Lamps are
+     green/red or **unmeasured**; they never invent numbers and never auto-claim
+     an SLO pass.
 
 > Browsers require **HTTPS or `localhost`** for `getUserMedia()` (mic + camera).
 > `127.0.0.1` and `localhost` both work; plain `http://192.168.x.y` does NOT.
@@ -98,6 +111,44 @@ websocat ws://localhost:8765/v1/realtime
 
 The backend exposes one concurrent session per pipeline unit
 (`--num_pipelines` to serve more).
+
+## Monitor and test cases
+
+The lab dock (toolbar chart button, or open <http://localhost:7860/lab>) is the
+same conversation — it does not start a second speech pipeline. It records
+**client-measured** timestamps for:
+
+| Mark | From → to |
+|------|-----------|
+| TTFA | `user_eos` (`speech_stopped`) → first audible bot audio |
+| Stop | client speech energy while the bot is talking → playback flush |
+| Onset | client speech energy → `speech_started` |
+| Hangover | client energy drop → `speech_stopped` |
+
+Session p50 / p95 / max are computed only from samples that exist. SLO lamps
+are green or red against the locked ceilings, or labeled **unmeasured** when
+there is no sample. They never invent a number and never auto-claim a session
+SLO pass.
+
+Locked SLOs (user end-of-speech → first audible bot audio, unless noted):
+
+- TTFA p50 ≤ 700 ms / p95 ≤ 1100 ms / hard ≤ 1200 ms
+- Barge-in stop p50 ≤ 120 ms / p95 ≤ 250 ms
+- Onset `speech_started` p50 ≤ 64 ms (cap 70). `min_speech_ms` 384 is
+  turn-commit only, not the cancel trigger.
+
+Named cases (Start / Stop, pass/fail from observed events):
+
+- **C1 barge-in real** — talk over the bot; expect cancel/flush
+- **C3 false-barge** — brief click/cough should not cancel
+- **C4 hangover confirm** — stay quiet after speaking; expect `user_eos`
+- **C6 silence nudge** — silence commits the turn (or a quiet hold with no
+  false onset)
+- **C7 get_time** — ask the time; expect the `get_time` tool plus a reply
+- **Latency turn** — one spoken turn, record TTFA (observational only)
+
+This demo talks to `ws://localhost:8765/v1/realtime` (or `SPEECH_TO_SPEECH_URL`).
+It does not add LiveKit, Twilio, Daily, a custom SFU, or cloud ASR/LLM/TTS.
 
 ## WebRTC transport
 
@@ -149,7 +200,8 @@ Three modes, picked by env (`/api/config` tells the client which one is active):
   load-balancer logic entirely (no `/api/session` proxy, no queue, no
   metering, no sign-in). Unlike the LB address it is not a secret. Accepts a
   full `ws(s)://host/v1/realtime` URL or a bare host like `localhost:8765`
-  (the app adds `/v1/realtime`).
+  (the app adds `/v1/realtime`). When neither this nor `LOAD_BALANCER_URL` is
+  set, the demo defaults to `ws://127.0.0.1:8765/v1/realtime`.
 - **Neither env set** — **Settings → Speech-to-speech server URL**: paste a
   full connect URL or a bare host, and the browser connects to it directly.
 - **`LOAD_BALANCER_URL` env** — multi-compute deployments only: the browser
@@ -178,6 +230,8 @@ button, top-right):
 - **Camera** — while enabled, a live self-view shows bottom-left; when the model
   calls the tool, the current frame is sent to the vision-language model so it can
   see what you're showing it.
+- **Get time** — returns the device-local date and time. Used by the C7 lab
+  case (`get_time`).
 
 ## Usage limits (deployed Space only)
 
@@ -215,8 +269,10 @@ transport pick).
 
 | File | Role |
 |------|------|
-| `index.html` | Single page, orb + settings modal (identical UI to the WebRTC app) |
+| `index.html` | Single page, orb + settings modal + lab dock (`/lab` serves this too) |
 | `main.js` | State machine, settings, tools, camera, noise-gate UI wiring |
+| `ui/lab.js` | `LabView`: monitor dock, SLO lamps, named test cases |
+| `ui/metrics.js` | Client-measured TTFA / stop / onset / hangover + case grading |
 | `ui/chat.js` | `ChatView`: history panel, ephemeral bubbles, transcript/tool streaming |
 | `ui/account.js` | `Account`: HF login chip + popover, daily-limit modal |
 | `ui/dom.js` | Shared helpers: `$`, `escHtml`, `truncateError`, `DEBUG` |

@@ -38,6 +38,18 @@ From a source checkout, talk to it from a second terminal:
 python scripts/listen_and_play_realtime.py --host 127.0.0.1 --port 8765
 ```
 
+Or use the bundled browser demo (same repo — no separate app). With the
+realtime backend already on `8765`:
+
+```bash
+uv run uvicorn --app-dir demo server:app --port 7860
+```
+
+Open <http://localhost:7860/> to talk, or <http://localhost:7860/lab> for the
+monitor + named test cases. `SPEECH_TO_SPEECH_URL` defaults to
+`ws://127.0.0.1:8765/v1/realtime`. Hugging Face OAuth is not required locally.
+See [demo/README.md](./demo/README.md).
+
 Prefer to keep the LLM on your own machine? Serve Gemma 4 with llama.cpp:
 
 ```bash
