@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -81,3 +83,9 @@ def test_metrics_js_locks_slo_ceilings():
     assert "cap: 70" in text
     assert "never invents" in text
     assert "never an SLO certification" in text
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_metrics_js_grades_named_cases():
+    script = Path(__file__).resolve().parent / "test_demo_lab_metrics.mjs"
+    subprocess.run(["node", str(script)], check=True)
