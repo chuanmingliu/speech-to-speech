@@ -22,6 +22,7 @@ import { S2sRtcRealtimeClient } from "./rtc/s2s-rtc-client.js";
 import { $, truncateError, DEBUG } from "./ui/dom.js";
 import { ChatView } from "./ui/chat.js";
 import { Account } from "./ui/account.js";
+import { LabView, shouldOpenLab } from "./ui/lab.js";
 
 const DEFAULT_VOICE = "Aiden";
 const DEFAULT_INSTRUCTIONS =
@@ -95,6 +96,14 @@ const TOOL_DEFS = {
       "asks you to look.",
     parameters: { type: "object", properties: {}, required: [] },
   },
+  get_time: {
+    type: "function",
+    name: "get_time",
+    description:
+      "Return the current local date and time on the user's device. Use when the " +
+      "user asks what time it is or for today's date.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
 };
 
 /** Longest edge of the snapshot sent to the VLM, in px (keeps payload sane). */
@@ -149,20 +158,21 @@ function saveSettings(s) {
   localStorage.setItem(STORAGE_KEYS.transport, s.transport);
 }
 
-/** @returns {{ web_search: boolean, camera_snapshot: boolean }} */
+/** @returns {{ web_search: boolean, camera_snapshot: boolean, get_time: boolean }} */
 function loadTools() {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEYS.tools) || "{}");
-    // Both tools default ON (web search still only activates when a key exists).
+    // Tools default ON (web search still only activates when a key exists).
     // We never call getUserMedia on page load — the camera only actually starts
     // on a user gesture (conversation start), so a default-on flag doesn't
     // silently resume the webcam; an explicit saved `false` is respected.
     return {
       web_search: raw.web_search ?? true,
       camera_snapshot: raw.camera_snapshot ?? true,
+      get_time: raw.get_time ?? true,
     };
   } catch {
-    return { web_search: true, camera_snapshot: true };
+    return { web_search: true, camera_snapshot: true, get_time: true };
   }
 }
 
@@ -240,6 +250,8 @@ const toolsClose = $("#tools-close");
 const toolWebSwitch = $("#tool-web");
 /** @type {HTMLInputElement} */
 const toolCamSwitch = $("#tool-cam");
+/** @type {HTMLInputElement} */
+const toolTimeSwitch = $("#tool-time");
 /** @type {HTMLElement} */
 const toolWebRow = $("#tool-web-row");
 /** @type {HTMLElement} */
@@ -342,6 +354,7 @@ function activeToolDefs() {
   const defs = [];
   if (toolsEnabled.web_search && searchAvailable()) defs.push(TOOL_DEFS.web_search);
   if (toolsEnabled.camera_snapshot) defs.push(TOOL_DEFS.camera_snapshot);
+  if (toolsEnabled.get_time) defs.push(TOOL_DEFS.get_time);
   return defs;
 }
 
@@ -364,6 +377,11 @@ function pushToolsToSession() {
 // Owns the history panel, the ephemeral bubbles, and all transcript/tool
 // streaming state. The client's events are forwarded to its on* methods.
 const chat = new ChatView();
+
+// ── Lab monitor ─────────────────────────────────────────────────────────────
+// Connection, current-turn / session timings, SLO lamps, event log, and the
+// named test-case buttons. Opens from the toolbar or `/lab`.
+const lab = new LabView();
 
 // ── Account / limiter ─────────────────────────────────────────────────────
 // Login chip + daily-limit modal (inert unless the deploy is in LB mode). The
@@ -601,6 +619,7 @@ function syncToolsUi() {
   toolWebSwitch.disabled = !avail;
   toolWebRow.classList.toggle("disabled", !avail);
   toolCamSwitch.checked = toolsEnabled.camera_snapshot;
+  toolTimeSwitch.checked = toolsEnabled.get_time;
 
   if (serverSearchKey) {
     // Key lives server-side: show it as configured, never expose it.
@@ -655,6 +674,12 @@ toolCamSwitch.addEventListener("change", async () => {
     toolsEnabled.camera_snapshot = false;
     toolCamHint.textContent = "Let the assistant see through your webcam.";
   }
+  saveTools();
+  pushToolsToSession();
+});
+
+toolTimeSwitch.addEventListener("change", () => {
+  toolsEnabled.get_time = toolTimeSwitch.checked;
   saveTools();
   pushToolsToSession();
 });
@@ -826,6 +851,9 @@ async function runTool(name, argsJson, callId) {
       result.output = await execWebSearch(query);
       // Return the result and let the bare response.create (below) trigger the
       // spoken answer.
+      client.sendToolOutput(callId, result.output);
+    } else if (name === "get_time") {
+      result.output = new Date().toString();
       client.sendToolOutput(callId, result.output);
     } else if (name === "camera_snapshot") {
       const dataUrl = captureSnapshot();
@@ -1269,6 +1297,11 @@ async function doStart(audioContext = null) {
   // browser never dials the s2s server itself — the offer goes to the
   // same-origin /api/calls proxy — so there is no target to resolve.
   const target = transport === "webrtc" ? null : connectionTarget();
+  if (target && "directUrl" in target) lab.setUrl(target.directUrl);
+  else if (pinnedUrl) lab.setUrl(pinnedUrl);
+  else lab.setUrl(transport === "webrtc" ? "webrtc (env-pinned)" : "");
+  lab.resetSession();
+  lab.noteStatus("connecting");
   activeTransport = transport;
   // The radial gate arc (threshold handle around the mic button) is a WS
   // feature; over WebRTC only the mute button remains.
@@ -1341,6 +1374,10 @@ async function doStart(audioContext = null) {
   c.addEventListener("status", (e) => {
     const detail = /** @type {CustomEvent<{ status: string }>} */ (e).detail;
     onClientStatus(detail.status);
+    lab.noteStatus(detail.status);
+  });
+  c.addEventListener("protocol", (e) => {
+    lab.noteProtocol(/** @type {CustomEvent<{ name: string; t: number; tool?: string; source?: string; barging?: boolean }>} */ (e).detail);
   });
   c.addEventListener("transcript", (e) => {
     const d = /** @type {CustomEvent<{ role: "user" | "assistant"; text: string; partial: boolean; itemId?: string; responseId?: string }>} */ (e).detail;
@@ -1354,6 +1391,7 @@ async function doStart(audioContext = null) {
 
   c.addEventListener("toolcall", (e) => {
     const { name, arguments: args, callId } = /** @type {CustomEvent<{ name: string; arguments: string; callId: string }>} */ (e).detail;
+    lab.noteProtocol({ name: "toolcall", tool: name });
     chat.onToolCall(name);
     // Execute the tool, then push it to the conversation once the result is in,
     // so the toggle shows both the call input and its output together.
@@ -1389,6 +1427,7 @@ async function doStart(audioContext = null) {
   c.addEventListener("input-level", (e) => {
     const { rms } = /** @type {CustomEvent<{ rms: number }>} */ (e).detail;
     paintInputLevel(rms);
+    lab.noteInputLevel(rms);
   });
 
   try {
@@ -1537,6 +1576,7 @@ async function teardown() {
   micBtn.classList.remove("muted");
   document.body.classList.remove("rtc-live");
   setState("idle");
+  lab.noteStatus("idle");
   // Refresh the chip's remaining-today after the budget moved.
   if (limiterOn) void account.refresh();
 }
@@ -1556,7 +1596,11 @@ function onFatalError(err) {
 setState("idle");
 chat.renderEmptyState();
 initGateArc();
-void fetchConfig();
+if (shouldOpenLab()) lab.open();
+void fetchConfig().then(() => {
+  if (pinnedUrl) lab.setUrl(buildDirectWsUrl(pinnedUrl));
+  else if (settings.directUrl) lab.setUrl(buildDirectWsUrl(settings.directUrl));
+});
 // Start the webcam as soon as the user lands (camera tool defaults on), and
 // react to later permission changes (re-grant after a denial re-enables it).
 void autoStartCamera();

@@ -212,6 +212,17 @@ export class S2sWsRealtimeClient extends EventTarget {
     this.dispatchEvent(new CustomEvent("status", { detail: { status } }));
   }
 
+  /**
+   * Timestamped protocol mark for the lab monitor. Always client-measured.
+   * @param {string} name
+   * @param {Record<string, unknown>} [extra]
+   */
+  _emitProtocol(name, extra = {}) {
+    this.dispatchEvent(new CustomEvent("protocol", {
+      detail: { name, t: performance.now(), ...extra },
+    }));
+  }
+
   /** Full assistant transcript so far for a response: the completed segments
    *  plus the in-progress one, all space-joined.
    *  @param {string} rid @returns {string} */
@@ -562,7 +573,11 @@ export class S2sWsRealtimeClient extends EventTarget {
    * @param {{ kind: string; queuedMs?: number; played?: number }} data
    */
   _onPlaybackMessage(data) {
-    if (data?.kind === "underrun") {
+    if (data?.kind === "audible") {
+      this._emitProtocol("first_audio", { source: "playback" });
+    } else if (data?.kind === "cleared") {
+      this._emitProtocol("flush");
+    } else if (data?.kind === "underrun") {
       // Server stopped sending audio mid-response. Most likely the turn
       // ended cleanly (a response.done usually arrives just before/after
       // this). We let the state machine fall back to "connected" via the
@@ -632,19 +647,24 @@ export class S2sWsRealtimeClient extends EventTarget {
         // Acknowledged by server, nothing to do.
         break;
 
-      case "input_audio_buffer.speech_started":
+      case "input_audio_buffer.speech_started": {
         // User started speaking — stop any audio still playing OR queued, every
         // time. We clear unconditionally (not just when `_aiSpeaking`): after a
         // reply or a tool result the worklet's ring buffer can still be draining
         // even though we already flipped `_aiSpeaking` off, and that tail would
         // otherwise keep playing over the user's barge-in.
+        const barging = this._aiSpeaking || this._status === "ai-speaking";
         this._playbackNode?.port.postMessage({ kind: "clear" });
         this._aiSpeaking = false;
         this._setStatus("user-speaking");
+        this._emitProtocol("speech_started", { barging });
+        if (barging) this._emitProtocol("cancel");
         break;
+      }
 
       case "input_audio_buffer.speech_stopped":
         if (this._status === "user-speaking") this._setStatus("processing");
+        this._emitProtocol("user_eos");
         break;
 
       case "response.created":
@@ -667,7 +687,9 @@ export class S2sWsRealtimeClient extends EventTarget {
       case "response.output_audio.delta": {
         this._pushAudioDelta(event.delta);
         const rid = event.response_id ?? event.response?.id;
+        const first = rid ? !this._audibleResponses.has(rid) : !this._aiSpeaking;
         if (rid) this._audibleResponses.add(rid);
+        if (first) this._emitProtocol("first_audio", { source: "delta", responseId: rid || "" });
         if (!this._aiSpeaking) {
           this._aiSpeaking = true;
           this._markAudible();

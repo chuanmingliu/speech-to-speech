@@ -158,6 +158,17 @@ export class S2sRtcRealtimeClient extends EventTarget {
     this.dispatchEvent(new CustomEvent("status", { detail: { status } }));
   }
 
+  /**
+   * Timestamped protocol mark for the lab monitor. Always client-measured.
+   * @param {string} name
+   * @param {Record<string, unknown>} [extra]
+   */
+  _emitProtocol(name, extra = {}) {
+    this.dispatchEvent(new CustomEvent("protocol", {
+      detail: { name, t: performance.now(), ...extra },
+    }));
+  }
+
   /** Full assistant transcript so far for a response: completed segments plus
    *  the in-progress one. @param {string} rid @returns {string} */
   _asstDisplay(rid) {
@@ -392,6 +403,7 @@ export class S2sRtcRealtimeClient extends EventTarget {
       this._aiSpeaking = true;
       if (this._activeResponseId) this._audibleResponses.add(this._activeResponseId);
       this._markAudible();
+      this._emitProtocol("first_audio", { source: "playback" });
     }
   }
 
@@ -430,16 +442,24 @@ export class S2sRtcRealtimeClient extends EventTarget {
       case "session.updated":
         break;
 
-      case "input_audio_buffer.speech_started":
+      case "input_audio_buffer.speech_started": {
         // Barge-in: unlike WS there is no client playback buffer to clear —
         // the server flushes its track buffer — so this is UI state only.
+        const barging = this._aiSpeaking || this._status === "ai-speaking";
         this._aiSpeaking = false;
         this._lastAudibleAt = 0;
         this._setStatus("user-speaking");
+        this._emitProtocol("speech_started", { barging });
+        if (barging) {
+          this._emitProtocol("flush");
+          this._emitProtocol("cancel");
+        }
         break;
+      }
 
       case "input_audio_buffer.speech_stopped":
         if (this._status === "user-speaking") this._setStatus("processing");
+        this._emitProtocol("user_eos");
         break;
 
       case "response.created":

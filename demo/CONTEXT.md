@@ -70,6 +70,13 @@ tool (and the web-search key status). Turning a switch on/off declares or remove
 that tool on the live session. Distinct from *Settings* (connection, voice,
 instructions) and the *About panel* (project info).
 
+## Lab / monitor
+The right-hand dock opened from the chart button or `/lab`. Same conversation as
+the orb: live connection status, client-measured TTFA / stop / onset / hangover,
+session percentiles, SLO lamps (green, red, or unmeasured), a protocol event log,
+and named test-case buttons. Distinct from *Settings* and the *Tools panel*. It
+does not run a second speech pipeline.
+
 ## Identity block
 The top-left corner of the topbar (replacing the old wordmark): the demo name, a
 one-line blurb, and the "powered by" / "built by" credits, shown directly rather

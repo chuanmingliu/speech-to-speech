@@ -57,6 +57,7 @@ class AudioPlaybackProcessor extends AudioWorkletProcessor {
               this._playing = true;
               this._fadeIn = FADE_FRAMES;
               this._fadeOut = 0;
+              this.port.postMessage({ kind: "audible" });
             }
           }
           break;
@@ -65,6 +66,7 @@ class AudioPlaybackProcessor extends AudioWorkletProcessor {
           this._readIdx = 0;
           this._fracPos = 0;
           this._fadeOut = FADE_FRAMES;
+          this.port.postMessage({ kind: "cleared" });
           break;
       }
     };

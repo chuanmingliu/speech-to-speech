@@ -20,9 +20,12 @@ the live Space, never locally (even with the LB exported for testing).
 
 `SPEECH_TO_SPEECH_URL` overrides everything: when set, the LB logic above is
 disabled entirely (no session proxy, no queue, no metering, no sign-in) and the
-browser connects directly to that URL, shown read-only in Settings.
+browser connects directly to that URL, shown read-only in Settings. Locally,
+when neither that nor ``LOAD_BALANCER_URL`` is set, it defaults to
+``ws://127.0.0.1:8765/v1/realtime``. HF OAuth is not required for local use.
 
 Endpoints:
+  GET  /lab                  -> same index.html with the monitor + test-case dock open
   GET  /api/config           -> { search, lb, allowDirect, s2sUrl, rtc, iceServers, auth }
   GET  /api/me               -> login + tier + remaining budget (LB mode only)
   POST /api/search           -> { results, answer }  Google via Serper.dev
@@ -51,7 +54,7 @@ import auth
 import httpx
 import limiter
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -69,7 +72,30 @@ LOAD_BALANCER_URL = os.environ.get("LOAD_BALANCER_URL", "").strip()
 # no limiter, no sign-in) and the browser connects to this URL directly. Unlike
 # the LB address it is NOT a secret — /api/config sends it to the client, which
 # shows it read-only in Settings.
-SPEECH_TO_SPEECH_URL = os.environ.get("SPEECH_TO_SPEECH_URL", "").strip()
+DEFAULT_SPEECH_TO_SPEECH_URL = "ws://127.0.0.1:8765/v1/realtime"
+
+
+def resolve_direct_s2s_url(s2s_url: str = "", lb_url: str = "") -> str:
+    """Pick the browser's realtime URL.
+
+    An explicit ``SPEECH_TO_SPEECH_URL`` always wins. A load-balancer deploy
+    leaves this empty (the browser POSTs ``/api/session``). Locally, with
+    neither env set, default to the realtime backend on 8765 so the demo
+    works without HF OAuth or a typed Settings URL.
+    """
+    s2s_url = (s2s_url or "").strip()
+    lb_url = (lb_url or "").strip()
+    if s2s_url:
+        return s2s_url
+    if lb_url:
+        return ""
+    return DEFAULT_SPEECH_TO_SPEECH_URL
+
+
+SPEECH_TO_SPEECH_URL = resolve_direct_s2s_url(
+    os.environ.get("SPEECH_TO_SPEECH_URL", ""),
+    LOAD_BALANCER_URL,
+)
 if SPEECH_TO_SPEECH_URL:
     LOAD_BALANCER_URL = ""
 # HF injects SPACE_ID ("owner/space") into every Space runtime; it's absent
@@ -529,6 +555,12 @@ async def session_end(request: Request):
     if sid:
         await asyncio.to_thread(limiter.end, sid)
     return {"ok": True}
+
+
+@app.get("/lab")
+def lab():
+    """Same demo page; the client opens the monitor + test-case dock."""
+    return FileResponse(os.path.join(HERE, "index.html"))
 
 
 # Static front-end. Registered last so the /api routes win. `html=True` serves
