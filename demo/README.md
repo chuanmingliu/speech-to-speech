@@ -23,6 +23,17 @@ backend, speaking the OpenAI Realtime **GA** protocol over **WebSocket**
 No Hugging Face OAuth is required for local use. Metering and sign-in stay off
 unless both `LOAD_BALANCER_URL` and `SPACE_ID` are set (the deployed Space).
 
+**One command (Mac):** starts the realtime backend on `:8765` (MLX + Parakeet +
+Qwen3 TTS, or reuses one already running), the demo on `:7860`, and opens
+<http://localhost:7860/lab>. Extra args are passed to `speech-to-speech`;
+Ctrl+C stops both.
+
+```bash
+./demo/start_lab.sh
+```
+
+The manual steps below do the same thing piece by piece.
+
 1. **Start the speech-to-speech backend** in realtime mode (from the repo root;
    see the [backend README](https://github.com/huggingface/speech-to-speech/blob/main/src/speech_to_speech/api/openai_realtime/README.md)
    for more model combinations):
